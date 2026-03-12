@@ -21,16 +21,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+
 @app.on_event("startup")
 async def startup_event():
-    try:
-        logger.info("Starting ORCHID API...")
-        # Test model load
-        from maneuver_engine import load_model
-        load_model()
-        logger.info("Model loaded successfully")
-    except Exception as e:
-        logger.error(f"Startup error - model may not load: {e}")
+    logger.info("Starting ORCHID API v2.0...")
 
 class TLEInput(BaseModel):
     norad_id: str
