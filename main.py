@@ -129,9 +129,11 @@ def gen_contract(input: CodeInput):
         logger.error(f"Contract gen error: {e}")
         raise HTTPException(status_code=500, detail="Contract generation failed")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app.mount("/static", StaticFiles(directory="static"), name="static")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/ui")
 def ui():
-    return FileResponse("static/index.html")
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
     
