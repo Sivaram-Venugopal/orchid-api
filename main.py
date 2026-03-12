@@ -131,9 +131,13 @@ def gen_contract(input: CodeInput):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/ui")
 def ui():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    index = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    return {"error": "UI not found", "static_dir": STATIC_DIR, "exists": os.path.exists(STATIC_DIR)}
     
