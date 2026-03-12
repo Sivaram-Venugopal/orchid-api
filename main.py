@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -127,7 +128,7 @@ def gen_contract(input: CodeInput):
     except Exception as e:
         logger.error(f"Contract gen error: {e}")
         raise HTTPException(status_code=500, detail="Contract generation failed")
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/ui")
