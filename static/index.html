@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ORCHID — AI API Platform</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background: #0a0a1a; color: #e0e0ff; min-height: 100vh; }
+    header { background: #0d0d2b; padding: 20px 40px; border-bottom: 2px solid #6C63FF; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 24px; color: #fff; }
+    header span { background: #6C63FF; color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
+    .tabs { display: flex; gap: 0; background: #0d0d2b; border-bottom: 1px solid #222; padding: 0 40px; }
+    .tab { padding: 14px 28px; cursor: pointer; color: #888; border-bottom: 3px solid transparent; font-size: 14px; transition: all 0.2s; }
+    .tab.active { color: #6C63FF; border-bottom-color: #6C63FF; font-weight: bold; }
+    .tab:hover { color: #fff; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 40px; }
+    .section { display: none; }
+    .section.active { display: block; }
+    h2 { font-size: 22px; margin-bottom: 8px; color: #fff; }
+    p.sub { color: #888; margin-bottom: 24px; font-size: 14px; }
+    textarea { width: 100%; height: 260px; background: #111130; color: #e0e0ff; border: 1px solid #333; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; resize: vertical; }
+    .btn { background: #6C63FF; color: #fff; border: none; padding: 12px 32px; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: bold; margin-top: 12px; transition: background 0.2s; }
+    .btn:hover { background: #5a52e0; }
+    .btn.teal { background: #00A896; }
+    .btn.teal:hover { background: #008f7e; }
+    .output { background: #111130; border: 1px solid #333; border-radius: 8px; padding: 20px; margin-top: 20px; min-height: 160px; font-family: monospace; font-size: 13px; white-space: pre-wrap; color: #00ff99; }
+    .status { margin-top: 10px; font-size: 13px; color: #FFD700; }
+    .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px; }
+    .card { background: #111130; border: 1px solid #333; border-radius: 10px; padding: 24px; }
+    .card h3 { color: #6C63FF; margin-bottom: 8px; }
+    .card p { color: #aaa; font-size: 13px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-bottom: 12px; }
+    .badge.critical { background: #ff4757; color: #fff; }
+    .badge.high { background: #ff6b35; color: #fff; }
+    .badge.medium { background: #FFD700; color: #000; }
+    .badge.low { background: #00C48C; color: #fff; }
+    .hero { text-align: center; padding: 60px 0 40px; }
+    .hero h1 { font-size: 48px; color: #fff; margin-bottom: 12px; }
+    .hero p { color: #888; font-size: 18px; margin-bottom: 32px; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 40px; }
+    .stat { background: #111130; border: 1px solid #333; border-radius: 10px; padding: 24px; text-align: center; }
+    .stat .num { font-size: 36px; font-weight: bold; color: #6C63FF; }
+    .stat .label { color: #888; font-size: 13px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🛰️ ORCHID</h1>
+  <span>v2.0 LIVE</span>
+  <span style="background:#00A896">AI-Powered</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('home')">Home</div>
+  <div class="tab" onclick="showTab('analyze')">Collision Avoidance</div>
+  <div class="tab" onclick="showTab('docs')">Generate Docs</div>
+  <div class="tab" onclick="showTab('contract')">Generate Contract</div>
+</div>
+
+<!-- HOME -->
+<div class="container">
+  <div class="section active" id="home">
+    <div class="hero">
+      <h1>ORCHID API Platform</h1>
+      <p>Autonomous Satellite Collision Avoidance + AI-Powered API Documentation</p>
+      <button class="btn" onclick="showTab('analyze')">Try Collision Avoidance →</button>
+      &nbsp;
+      <button class="btn teal" onclick="showTab('docs')">Generate Docs →</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">100%</div><div class="label">Survival Rate (Training)</div></div>
+      <div class="stat"><div class="num">88.8%</div><div class="label">Fuel Efficiency</div></div>
+      <div class="stat"><div class="num">1,116</div><div class="label">Real Satellites Trained</div></div>
+    </div>
+    <div class="card-grid" style="margin-top:40px">
+      <div class="card"><h3>🛰️ /analyze</h3><p>Detect collision risks and get autonomous maneuver recommendations using RL-trained model.</p></div>
+      <div class="card"><h3>📄 /generate-docs</h3><p>Paste any API code — get professional markdown documentation instantly using Claude AI.</p></div>
+      <div class="card"><h3>📋 /generate-contract</h3><p>Generate OpenAPI 3.0 contracts automatically from your source code.</p></div>
+      <div class="card"><h3>⚡ /risk-only</h3><p>Fast conjunction analysis without maneuver calculation for quick risk screening.</p></div>
+    </div>
+  </div>
+
+  <!-- ANALYZE -->
+  <div class="section" id="analyze">
+    <h2>Collision Avoidance Analysis</h2>
+    <p class="sub">Test ORCHID's RL-trained model with a CRITICAL scenario</p>
+    <button class="btn" onclick="runAnalyze()">⚡ Run CRITICAL Scenario</button>
+    <p class="status" id="analyze-status"></p>
+    <div class="output" id="analyze-output">Results will appear here...</div>
+  </div>
+
+  <!-- DOCS -->
+  <div class="section" id="docs">
+    <h2>AI Documentation Generator</h2>
+    <p class="sub">Paste your API code and get professional documentation instantly</p>
+    <textarea id="docs-code" placeholder="Paste your FastAPI, Express, or any API code here..."></textarea>
+    <br>
+    <button class="btn teal" onclick="runDocs()">📄 Generate Documentation</button>
+    <p class="status" id="docs-status"></p>
+    <div class="output" id="docs-output">Documentation will appear here...</div>
+  </div>
+
+  <!-- CONTRACT -->
+  <div class="section" id="contract">
+    <h2>OpenAPI Contract Generator</h2>
+    <p class="sub">Paste your API code and get an OpenAPI 3.0 contract instantly</p>
+    <textarea id="contract-code" placeholder="Paste your API code here..."></textarea>
+    <br>
+    <button class="btn" onclick="runContract()">📋 Generate Contract</button>
+    <p class="status" id="contract-status"></p>
+    <div class="output" id="contract-output">OpenAPI contract will appear here...</div>
+  </div>
+</div>
+
+<script>
+  const BASE = '';
+
+  function showTab(name) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(name).classList.add('active');
+    document.querySelectorAll('.tab')[['home','analyze','docs','contract'].indexOf(name)].classList.add('active');
+  }
+
+  async function runAnalyze() {
+    document.getElementById('analyze-status').textContent = '⏳ Analyzing...';
+    document.getElementById('analyze-output').textContent = '';
+    const payload = {
+      satellite: {
+        norad_id: "25544",
+        tle1: "1 25544U 98067A   26070.54791667  .00016717  00000-0  10270-3 0  9993",
+        tle2: "2 25544  51.6400 137.2200 0006703  86.2100 273.9700 15.49012691000000"
+      },
+      debris: [{
+        norad_id: "99999",
+        tle1: "1 99999U 00000A   26070.54791667  .00000000  00000-0  00000-0 0  9999",
+        tle2: "2 99999  51.6400 137.2200 0006703  86.2100 273.9700 15.49012691000000"
+      }]
+    };
+    try {
+      const res = await fetch(BASE + '/analyze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      const data = await res.json();
+      document.getElementById('analyze-output').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('analyze-status').textContent = '✅ Analysis complete!';
+    } catch(e) {
+      document.getElementById('analyze-status').textContent = '❌ Error: ' + e.message;
+    }
+  }
+
+  async function runDocs() {
+    const code = document.getElementById('docs-code').value;
+    if (!code) { document.getElementById('docs-status').textContent = 'Please paste some code first!'; return; }
+    document.getElementById('docs-status').textContent = '⏳ Generating documentation...';
+    document.getElementById('docs-output').textContent = '';
+    try {
+      const res = await fetch(BASE + '/generate-docs', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ code }) });
+      const data = await res.json();
+      document.getElementById('docs-output').textContent = data.documentation;
+      document.getElementById('docs-status').textContent = '✅ Documentation generated!';
+    } catch(e) {
+      document.getElementById('docs-status').textContent = '❌ Error: ' + e.message;
+    }
+  }
+
+  async function runContract() {
+    const code = document.getElementById('contract-code').value;
+    if (!code) { document.getElementById('contract-status').textContent = 'Please paste some code first!'; return; }
+    document.getElementById('contract-status').textContent = '⏳ Generating contract...';
+    document.getElementById('contract-output').textContent = '';
+    try {
+      const res = await fetch(BASE + '/generate-contract', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ code }) });
+      const data = await res.json();
+      document.getElementById('contract-output').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('contract-status').textContent = '✅ Contract generated!';
+    } catch(e) {
+      document.getElementById('contract-status').textContent = '❌ Error: ' + e.message;
+    }
+  }
+</script>
+</body>
+</html>
