@@ -219,14 +219,12 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     distance_km = min_dist_m / 1000.0
     time_to_ca_min = tca_offset / 60.0
     
-    if distance_km < 0.1:
-        risk = "CRITICAL"
-    elif distance_km < 0.5:
-        risk = "HIGH"
-    elif distance_km < 2.0:
-        risk = "MEDIUM"
+    if prob > 1e-5 or distance_km < 0.2:
+        risk = "COLLISION_COURSE"
+    elif prob > 1e-7 or distance_km < 1.0:
+        risk = "WARNING"
     else:
-        risk = "LOW"
+        risk = "NOMINAL"
         
     return {
         "object_id": deb_id,

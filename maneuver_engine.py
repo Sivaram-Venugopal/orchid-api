@@ -103,8 +103,8 @@ def generate_maneuver(satellite, conjunctions):
     # Standard nominal delta_v is calibrated for a 30-minute drift time.
     # Therefore: dv_required = dv_nominal * (30.0 / drift_time)
     drift_time_ratio = 30.0 / burn_lead_time_min
-    # Clamp scale factor to keep delta-V physically realistic [0.2x to 2.5x]
-    dv_scale_factor = min(2.5, max(0.2, drift_time_ratio))
+    # Clamp scale factor to keep delta-V physically realistic [0.1x to 2.5x]
+    dv_scale_factor = min(2.5, max(0.1, drift_time_ratio))
     
     dv = dv * dv_scale_factor
 

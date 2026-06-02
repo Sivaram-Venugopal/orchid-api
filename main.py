@@ -153,19 +153,17 @@ def run_analysis_background(task_id: str, request: ManeuverRequest):
             progress_callback=progress_callback
         )
         
-        maneuver_required = any(c["risk_level"] in ["HIGH", "CRITICAL"] for c in conjunctions)
+        maneuver_required = any(c["risk_level"] == "COLLISION_COURSE" for c in conjunctions)
         maneuver = None
         if maneuver_required:
             maneuver = generate_maneuver(satellite, conjunctions)
             
         levels = [c["risk_level"] for c in conjunctions]
-        overall = "LOW"
-        if "CRITICAL" in levels:
-            overall = "CRITICAL"
-        elif "HIGH" in levels:
-            overall = "HIGH"
-        elif "MEDIUM" in levels:
-            overall = "MEDIUM"
+        overall = "NOMINAL"
+        if "COLLISION_COURSE" in levels:
+            overall = "COLLISION_COURSE"
+        elif "WARNING" in levels:
+            overall = "WARNING"
             
         result = {
             "satellite_id": satellite.norad_id,
@@ -233,19 +231,17 @@ def analyze(request: ManeuverRequest):
             sat_cov_rtn=sat_cov, deb_cov_rtn=deb_cov, hbr=hbr
         )
         
-        maneuver_required = any(c["risk_level"] in ["HIGH", "CRITICAL"] for c in conjunctions)
+        maneuver_required = any(c["risk_level"] == "COLLISION_COURSE" for c in conjunctions)
         maneuver = None
         if maneuver_required:
             maneuver = generate_maneuver(satellite, conjunctions)
             
         levels = [c["risk_level"] for c in conjunctions]
-        overall = "LOW"
-        if "CRITICAL" in levels:
-            overall = "CRITICAL"
-        elif "HIGH" in levels:
-            overall = "HIGH"
-        elif "MEDIUM" in levels:
-            overall = "MEDIUM"
+        overall = "NOMINAL"
+        if "COLLISION_COURSE" in levels:
+            overall = "COLLISION_COURSE"
+        elif "WARNING" in levels:
+            overall = "WARNING"
             
         logger.info(f"Analysis complete: {overall} risk")
         return OrchidResponse(

@@ -549,8 +549,8 @@
       <div class="form-group">
         <label>SELECT PRESET CONJUNCTION SCENARIO</label>
         <div class="scenario-selector">
-          <button class="scenario-btn active" onclick="loadScenario('critical')">CRITICAL CONJUNCTION</button>
-          <button class="scenario-btn" onclick="loadScenario('high')">HIGH RISK DEBRIS</button>
+          <button class="scenario-btn active" onclick="loadScenario('critical')">IMMINENT COLLISION COURSE</button>
+          <button class="scenario-btn" onclick="loadScenario('high')">PROXIMITY WARNING</button>
           <button class="scenario-btn" onclick="loadScenario('nominal')">NOMINAL ORBIT</button>
         </div>
       </div>
@@ -900,9 +900,9 @@
 
       // Update class & display based on threat level
       threatAlert.className = 'alert-banner';
-      if (risk === 'CRITICAL' || risk === 'HIGH') {
-        threatAlert.classList.add(risk === 'CRITICAL' ? 'critical' : 'high');
-        threatAlert.textContent = `🚨 ${risk} COLLISION HAZARD DETECTED IN SECTOR`;
+      if (risk === 'COLLISION_COURSE' || risk === 'WARNING') {
+        threatAlert.classList.add(risk === 'COLLISION_COURSE' ? 'critical' : 'high');
+        threatAlert.textContent = `🚨 COLLISION THREAT: Debris NORAD #${conj.object_id} incoming in ${tca.toFixed(1)}m. Fuel-saving evasive maneuver generated.`;
       } else {
         threatAlert.classList.add('nominal');
         threatAlert.textContent = `🛡️ NOMINAL ORBIT STATUS. CONJUNCTION RISK WITHIN SAFETY LIMITS.`;
@@ -965,7 +965,7 @@
         ellipseEl.setAttribute('transform', `rotate(${-angleDeg} ${cx_val} ${cy_val})`);
         
         // Set styling color according to risk level
-        if (risk === 'CRITICAL' || risk === 'HIGH') {
+        if (risk === 'COLLISION_COURSE' || risk === 'WARNING') {
           ellipseEl.style.stroke = 'rgba(255, 0, 85, 0.6)';
           ellipseEl.style.fill = 'rgba(255, 0, 85, 0.08)';
         } else {
