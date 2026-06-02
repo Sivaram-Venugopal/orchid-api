@@ -65,20 +65,22 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     deb_pos, deb_vel: 3D numpy arrays in ECI (TEME) frame (meters, m/s)
     deb_cov_rtn: 3x3 numpy array (covariance of debris in RTN frame)
     hbr: Hard-body radius (meters)
-    Returns: (probability: float, C_2D: np.ndarray)
+    Returns: (probability: float, C_2D: np.ndarray, R_sat: np.ndarray, P: np.ndarray)
     """
     default_cov_2d = np.zeros((2, 2))
+    dummy_R = np.eye(3)
+    dummy_P = np.zeros((3, 2))
     
     # 1. Coordinate transformation matrices from RTN to ECI (TEME)
     # For satellite
     r_sat_norm = np.linalg.norm(sat_pos)
     if r_sat_norm < 1e-3:
-        return 0.0, default_cov_2d
+        return 0.0, default_cov_2d, dummy_R, dummy_P
     u_R_sat = sat_pos / r_sat_norm
     h_sat = np.cross(sat_pos, sat_vel)
     h_sat_norm = np.linalg.norm(h_sat)
     if h_sat_norm < 1e-3:
-        return 0.0, default_cov_2d
+        return 0.0, default_cov_2d, dummy_R, dummy_P
     u_N_sat = h_sat / h_sat_norm
     u_T_sat = np.cross(u_N_sat, u_R_sat)
     R_sat = np.column_stack((u_R_sat, u_T_sat, u_N_sat)) # 3x3 matrix
@@ -86,12 +88,12 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     # For debris
     r_deb_norm = np.linalg.norm(deb_pos)
     if r_deb_norm < 1e-3:
-        return 0.0, default_cov_2d
+        return 0.0, default_cov_2d, dummy_R, dummy_P
     u_R_deb = deb_pos / r_deb_norm
     h_deb = np.cross(deb_pos, deb_vel)
     h_deb_norm = np.linalg.norm(h_deb)
     if h_deb_norm < 1e-3:
-        return 0.0, default_cov_2d
+        return 0.0, default_cov_2d, dummy_R, dummy_P
     u_N_deb = h_deb / h_deb_norm
     u_T_deb = np.cross(u_N_deb, u_R_deb)
     R_deb = np.column_stack((u_R_deb, u_T_deb, u_N_deb)) # 3x3 matrix
@@ -106,7 +108,7 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     v_rel = sat_vel - deb_vel
     v_rel_norm = np.linalg.norm(v_rel)
     if v_rel_norm < 1e-3:
-        return 0.0, default_cov_2d
+        return 0.0, default_cov_2d, dummy_R, dummy_P
     
     # Encounter plane y-axis is in direction of relative velocity
     u_y_enc = v_rel / v_rel_norm
@@ -134,7 +136,7 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     # Compute probability of collision Pc
     det_C = np.linalg.det(C_2D)
     if det_C <= 0:
-        return 0.0, C_2D
+        return 0.0, C_2D, R_sat, P
         
     # Analytical approximation (for small HBR)
     C_2D_inv = np.linalg.inv(C_2D)
@@ -146,32 +148,103 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
         pc_approx = (hbr**2) / (2.0 * np.sqrt(det_C)) * np.exp(exponent)
         
     prob = min(1.0, max(0.0, float(pc_approx)))
-    return prob, C_2D
+    return prob, C_2D, R_sat, P
 
-def calculate_mesh_probability(C_2D, d, sat_length=12.0, sat_width=3.0):
+def calculate_mesh_probability(C_2D, d, R_sat, P):
     """
-    Computes collision probability using a 3D Oriented Bounding Box (OBB)
+    Computes collision probability using a 3D Oriented Bounding Box (OBB) & Solar Arrays
     projected onto the 2D b-plane, rather than a spherical HBR approximation.
-    Uses the Gaussian density at the closest approach point scaled by the projected area.
+    Integrates the 2D Gaussian density function over the exact projected structural geometry.
     """
+    from scipy.spatial import ConvexHull
+    
     det_C = np.linalg.det(C_2D)
     if det_C <= 0:
         return 0.0
         
     C_2D_inv = np.linalg.inv(C_2D)
-    exponent = -0.5 * (d**2) * C_2D_inv[0, 0]
     
-    if exponent < -50:
+    # Define satellite body geometry boxes (Bus + 2 Solar Arrays) in Local Body Frame
+    bus_min = np.array([-1.5, -1.0, -1.0])
+    bus_max = np.array([1.5, 1.0, 1.0])
+    p1_min = np.array([-0.1, -1.0, 1.0])
+    p1_max = np.array([0.1, 1.0, 6.0])
+    p2_min = np.array([-0.1, -1.0, -6.0])
+    p2_max = np.array([0.1, 1.0, -1.0])
+    
+    def get_projected_box_hull(box_min, box_max, R_sat_mat, P_mat):
+        vertices = []
+        for x in [box_min[0], box_max[0]]:
+            for y in [box_min[1], box_max[1]]:
+                for z in [box_min[2], box_max[2]]:
+                    vertices.append([x, y, z])
+        vertices_body = np.array(vertices).T # 3x8
+        vertices_eci = R_sat_mat @ vertices_body # 3x8
+        vertices_b = P_mat.T @ vertices_eci # 2x8
+        points_2d = vertices_b.T # 8x2
+        try:
+            hull = ConvexHull(points_2d)
+            return points_2d[hull.vertices]
+        except Exception:
+            return points_2d
+
+    hulls = [
+        get_projected_box_hull(bus_min, bus_max, R_sat, P),
+        get_projected_box_hull(p1_min, p1_max, R_sat, P),
+        get_projected_box_hull(p2_min, p2_max, R_sat, P)
+    ]
+    
+    # Find bounding box
+    all_points = np.vstack(hulls)
+    x_min, z_min = np.min(all_points, axis=0)
+    x_max, z_max = np.max(all_points, axis=0)
+    
+    # Perform Monte Carlo Integration over the bounding box
+    num_samples = 1500
+    np.random.seed(42) # deterministic seed for consistency
+    xs = np.random.uniform(x_min, x_max, num_samples)
+    zs = np.random.uniform(z_min, z_max, num_samples)
+    samples = np.column_stack((xs, zs))
+    
+    # Check which samples are inside the union of hulls
+    inside_union = np.zeros(num_samples, dtype=bool)
+    for hull in hulls:
+        M = len(hull)
+        if M < 3:
+            continue
+        v = np.vstack([hull, hull[0]])
+        first_edge_signs = (v[1, 0] - v[0, 0]) * (samples[:, 1] - v[0, 1]) - (v[1, 1] - v[0, 1]) * (samples[:, 0] - v[0, 0])
+        is_positive = np.mean(first_edge_signs >= 0) > 0.5
+        
+        inside_hull = np.ones(num_samples, dtype=bool)
+        for i in range(M):
+            dx = v[i+1, 0] - v[i, 0]
+            dz = v[i+1, 1] - v[i, 1]
+            cross = dx * (samples[:, 1] - v[i, 1]) - dz * (samples[:, 0] - v[i, 0])
+            if is_positive:
+                inside_hull &= (cross >= -1e-9)
+            else:
+                inside_hull &= (cross <= 1e-9)
+        inside_union |= inside_hull
+        
+    inside_samples = samples[inside_union]
+    if len(inside_samples) == 0:
         return 0.0
         
-    # Projected area of Oriented Bounding Box (OBB)
-    projected_area = sat_length * sat_width
+    dx_vals = inside_samples[:, 0] - d
+    dz_vals = inside_samples[:, 1]
     
-    # Evaluate 2D Gaussian PDF at closest approach point
-    pdf_val = (1.0 / (2.0 * np.pi * np.sqrt(det_C))) * np.exp(exponent)
+    quad_form = (
+        dx_vals * (C_2D_inv[0, 0] * dx_vals + C_2D_inv[0, 1] * dz_vals) +
+        dz_vals * (C_2D_inv[1, 0] * dx_vals + C_2D_inv[1, 1] * dz_vals)
+    )
     
-    # Probability = Area * PDF
-    prob_mesh = projected_area * pdf_val
+    exponent = -0.5 * quad_form
+    pdf_vals = (1.0 / (2.0 * np.pi * np.sqrt(det_C))) * np.exp(exponent)
+    
+    box_area = (x_max - x_min) * (z_max - z_min)
+    prob_mesh = box_area * np.sum(pdf_vals) / num_samples
+    
     return min(1.0, max(0.0, float(prob_mesh)))
 
 def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
@@ -269,13 +342,13 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     time_to_ca_min = tca_offset / 60.0
     
     if sat_pos_tca is not None and deb_pos_tca is not None and sat_vel_tca is not None and deb_vel_tca is not None:
-        prob, C_2D = calculate_collision_probability(
+        prob, C_2D, R_sat, P = calculate_collision_probability(
             sat_pos_tca, sat_vel_tca, sat_cov_rtn,
             deb_pos_tca, deb_vel_tca, deb_cov_rtn,
             hbr
         )
         cov_list = C_2D.tolist()
-        prob_mesh = calculate_mesh_probability(C_2D, distance_km * 1000.0, sat_length=12.0, sat_width=3.0)
+        prob_mesh = calculate_mesh_probability(C_2D, distance_km * 1000.0, R_sat, P)
     else:
         prob = 0.0
         prob_mesh = 0.0

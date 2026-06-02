@@ -270,7 +270,7 @@ def resolve_request(request: ManeuverRequest):
             tle2=sat_data["line2"]
         )
         debris_pool = [
-            TLEInput(norad_id=nid, tle1=d["line1"], tle2=d["line2"])
+            {"norad_id": nid, "tle1": d["line1"], "tle2": d["line2"]}
             for nid, d in catalog.items()
             if d.get("type") == "debris"
         ]

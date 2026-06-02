@@ -83,19 +83,59 @@ def ukf_propagate(x, P, dt_sec, Q, mass=550.0, area=12.0, drag_coeff=2.2):
     
     return x_pred, P_pred, propagated_sigmas
 
-def ukf_update(x_pred, P_pred, sigmas_pred, z, R):
+def measurement_model(state, sensor_type="cartesian", sensor_location=None):
+    import math
+    import numpy as np
+    
+    pos = state[:3]
+    if sensor_location is not None:
+        r_rel = pos - np.array(sensor_location)
+    else:
+        r_rel = pos
+        
+    rx, ry, rz = r_rel[0], r_rel[1], r_rel[2]
+    r = math.sqrt(rx*rx + ry*ry + rz*rz)
+    
+    if sensor_type == "cartesian":
+        return pos.copy()
+        
+    elif sensor_type == "laser":
+        return np.array([r])
+        
+    elif sensor_type == "radar":
+        if r < 1e-3:
+            return np.array([0.0, 0.0, 0.0])
+        az = math.atan2(ry, rx)
+        el = math.asin(rz / r)
+        return np.array([r, az, el])
+        
+    elif sensor_type == "optical":
+        if r < 1e-3:
+            return np.array([0.0, 0.0])
+        ra = math.atan2(ry, rx)
+        dec = math.asin(rz / r)
+        return np.array([ra, dec])
+        
+    else:
+        return pos.copy()
+
+def ukf_update(x_pred, P_pred, sigmas_pred, z, R, sensor_type="cartesian", sensor_location=None):
     """
-    Updates predicted state mean and covariance with a new noisy position measurement.
-    z: Measured position [x, y, z] (meters)
+    Updates predicted state mean and covariance with a new noisy measurement from any sensor.
+    z: Measured vector (meters or radians)
     R: Measurement noise covariance matrix
+    sensor_type: "cartesian", "radar", "optical", or "laser"
+    sensor_location: Ground station ECI coordinates [X, Y, Z] (optional)
     """
     n = len(x_pred)
     w_m, w_c, lambda_val = get_ukf_weights(n)
     
-    # Measurement model maps 6D state to 3D position [x, y, z]
+    # Map sigma points through non-linear measurement model
     m_dim = len(z)
-    sigmas_meas = sigmas_pred[:, :m_dim]
-    
+    sigmas_meas = np.zeros((2*n + 1, m_dim))
+    for i in range(2*n + 1):
+        sigmas_meas[i] = measurement_model(sigmas_pred[i], sensor_type, sensor_location)
+        
     # Compute predicted measurement mean
     z_pred = np.zeros(m_dim)
     for i in range(2*n + 1):
