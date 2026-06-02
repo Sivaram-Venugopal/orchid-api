@@ -156,7 +156,7 @@ def run_analysis_background(task_id: str, request: ManeuverRequest):
         maneuver_required = any(c["risk_level"] == "COLLISION_COURSE" for c in conjunctions)
         maneuver = None
         if maneuver_required:
-            maneuver = generate_maneuver(satellite, conjunctions)
+            maneuver = generate_maneuver(satellite, conjunctions, debris_pool)
             
         levels = [c["risk_level"] for c in conjunctions]
         overall = "NOMINAL"
@@ -234,7 +234,7 @@ def analyze(request: ManeuverRequest):
         maneuver_required = any(c["risk_level"] == "COLLISION_COURSE" for c in conjunctions)
         maneuver = None
         if maneuver_required:
-            maneuver = generate_maneuver(satellite, conjunctions)
+            maneuver = generate_maneuver(satellite, conjunctions, debris_pool)
             
         levels = [c["risk_level"] for c in conjunctions]
         overall = "NOMINAL"

@@ -55,7 +55,97 @@ def load_model_for_regime(regime: str):
             
     return _models[regime]
 
-def generate_maneuver(satellite, conjunctions):
+def verify_maneuver_safety(satellite, conjunctions, debris_pool, dv, minutes_until_burn, omega):
+    """
+    Verifies if the evasive maneuver delta-V causes a secondary collision course
+    with any other debris object in the pool using the Clohessy-Wiltshire equations.
+    """
+    from sgp4.api import jday, Satrec
+    from risk_engine import get_state_at_time, get_tle_fields
+    from datetime import datetime, timezone, timedelta
+    
+    if not debris_pool:
+        return []
+        
+    secondary_hazards = []
+    
+    # Map debris_id to TLE inputs
+    debris_map = {}
+    for d in debris_pool:
+        did, dtle1, dtle2 = get_tle_fields(d)
+        debris_map[did] = (dtle1, dtle2)
+        
+    sat_rec = Satrec.twoline2rv(satellite.tle1, satellite.tle2)
+    
+    # Check secondary threats (skip primary threat at index 0)
+    for conj in conjunctions[1:10]: # Check up to 10 closest objects
+        deb_id = conj["object_id"]
+        if deb_id not in debris_map:
+            continue
+            
+        tca_min = conj["time_to_closest_approach_min"]
+        
+        # Drift time in seconds after the burn
+        drift_sec = (tca_min - minutes_until_burn) * 60.0
+        if drift_sec <= 0:
+            continue # Burn happens after this TCA, no effect
+            
+        # Clohessy-Wiltshire (CW) equations to calculate delta_r in RTN
+        wt = omega * drift_sec
+        sin_wt = np.sin(wt)
+        cos_wt = np.cos(wt)
+        
+        dvr, dvt, dvn = dv
+        dr_r = (dvr / omega) * sin_wt + (2 * dvt / omega) * (1 - cos_wt)
+        dr_t = (2 * dvr / omega) * (cos_wt - 1) + (dvt / omega) * (4 * sin_wt - 3 * wt)
+        dr_n = (dvn / omega) * sin_wt
+        dr_rtn = np.array([dr_r, dr_t, dr_n])
+        
+        # Get start time of propagation based on satellite TLE epoch
+        epoch_yr = sat_rec.epochyr
+        year = 2000 + epoch_yr if epoch_yr < 57 else 1900 + epoch_yr
+        start_time = datetime(year, 1, 1, tzinfo=timezone.utc) + timedelta(days=sat_rec.epochdays - 1)
+        
+        tca_dt = start_time + timedelta(minutes=tca_min)
+        sat_pos, sat_vel = get_state_at_time(sat_rec, tca_dt)
+        
+        dtle1, dtle2 = debris_map[deb_id]
+        deb_rec = Satrec.twoline2rv(dtle1, dtle2)
+        deb_pos, _ = get_state_at_time(deb_rec, tca_dt)
+        
+        if sat_pos is None or deb_pos is None or sat_vel is None:
+            continue
+            
+        # Get RTN to ECI rotation matrix at TCA
+        r_norm = np.linalg.norm(sat_pos)
+        u_R = sat_pos / r_norm
+        h = np.cross(sat_pos, sat_vel)
+        h_norm = np.linalg.norm(h)
+        if h_norm < 1e-3:
+            continue
+        u_N = h / h_norm
+        u_T = np.cross(u_N, u_R)
+        R_sat = np.column_stack((u_R, u_T, u_N))
+        
+        # Relative position vector at TCA
+        r_rel_nominal = sat_pos - deb_pos
+        
+        # New relative position vector at TCA (r_rel_new = r_rel_nominal + R_sat @ dr_rtn)
+        r_rel_new = r_rel_nominal + R_sat @ dr_rtn
+        new_dist_km = np.linalg.norm(r_rel_new) / 1000.0
+        
+        # If the new distance is below 0.5 km, it's a hazard!
+        if new_dist_km < 0.5:
+            secondary_hazards.append({
+                "object_id": deb_id,
+                "time_to_closest_approach_min": round(float(tca_min), 1),
+                "original_distance_km": round(float(conj["distance_km"]), 4),
+                "post_maneuver_distance_km": round(float(new_dist_km), 4)
+            })
+            
+    return secondary_hazards
+
+def generate_maneuver(satellite, conjunctions, debris_pool=None):
     sat_state = tle_to_state(satellite.tle1, satellite.tle2)
     regime = get_orbital_regime(satellite.tle2)
     model = load_model_for_regime(regime)
@@ -99,14 +189,24 @@ def generate_maneuver(satellite, conjunctions):
     minutes_until_burn = max(0.0, tca_min - burn_lead_time_min)
     
     # Scale delta-V based on drift time. 
-    # The separation achieved is proportional to delta_v * drift_time.
-    # Standard nominal delta_v is calibrated for a 30-minute drift time.
-    # Therefore: dv_required = dv_nominal * (30.0 / drift_time)
     drift_time_ratio = 30.0 / burn_lead_time_min
     # Clamp scale factor to keep delta-V physically realistic [0.1x to 2.5x]
     dv_scale_factor = min(2.5, max(0.1, drift_time_ratio))
     
     dv = dv * dv_scale_factor
+
+    # Get mean motion (omega) in rad/s from TLE Line 2
+    try:
+        n_day = float(satellite.tle2[52:63].strip())
+        omega = n_day * (2.0 * np.pi / 86400.0)
+    except Exception:
+        omega = 0.0011 # default LEO mean motion
+
+    # Verify secondary safety check
+    secondary_hazards = verify_maneuver_safety(
+        satellite, conjunctions, debris_pool, dv, minutes_until_burn, omega
+    )
+    post_maneuver_clear = len(secondary_hazards) == 0
 
     DRY_MASS = 500.0
     INIT_FUEL = 50.0
@@ -120,5 +220,7 @@ def generate_maneuver(satellite, conjunctions):
         "fuel_cost_kg": round(float(fuel_cost), 4),
         "post_maneuver_safety_km": round(float(conjunctions[0]["distance_km"] * (1.5 / dv_scale_factor)), 3) if conjunctions else 0.0,
         "policy_regime": regime,
-        "burn_lead_time_min": round(float(burn_lead_time_min), 1)
+        "burn_lead_time_min": round(float(burn_lead_time_min), 1),
+        "post_maneuver_clear": post_maneuver_clear,
+        "secondary_hazards": secondary_hazards
     }

@@ -555,6 +555,17 @@
         </div>
       </div>
 
+      <div class="form-group" style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 15px;">
+        <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: rgba(255,255,255,0.6);">
+          <span>🛰️ REAL-TIME TELEMETRY SIMULATION</span>
+          <span id="sim-status-label" style="background: rgba(255,255,255,0.1); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold;">OFF</span>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 8px;">
+          <button id="sim-toggle-btn" class="action-btn" style="flex: 1; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s;" onclick="toggleSimulation()">START SIMULATION</button>
+          <button id="sim-reset-btn" class="action-btn secondary" style="padding: 8px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.1);" onclick="resetSimulation()" disabled>RESET</button>
+        </div>
+      </div>
+
       <div class="form-group">
         <label>TARGET SATELLITE (NORAD ID & TLE)</label>
         <div style="display: flex; gap: 10px; margin-bottom: 8px;">
@@ -703,7 +714,8 @@
           🤖 Selected RL Regime: <span id="burn-regime" style="color:var(--accent-secondary); font-weight:bold;">--</span><br>
           🕒 Start Burn Time: <span id="burn-time">--</span><br>
           ⛽ Fuel Mass Cost: <span id="burn-fuel">--</span> kg<br>
-          🛡️ Post-burn Closest Distance: <span id="burn-post">--</span> km
+          🛡️ Post-burn Closest Distance: <span id="burn-post">--</span> km<br>
+          ⚡ Secondary Safety Check: <span id="burn-safety-status" style="font-weight:bold;">--</span>
         </div>
       </div>
 
@@ -992,9 +1004,167 @@
         document.getElementById('burn-time').textContent = rawTime.toLocaleTimeString();
         document.getElementById('burn-fuel').textContent = data.maneuver.fuel_cost_kg.toFixed(4);
         document.getElementById('burn-post').textContent = data.maneuver.post_maneuver_safety_km.toFixed(3);
+        
+        // Update secondary safety
+        const safetyStatus = document.getElementById('burn-safety-status');
+        if (data.maneuver.post_maneuver_clear) {
+          safetyStatus.textContent = "SAFE (Clear Trajectory)";
+          safetyStatus.style.color = "#00f5d4";
+        } else {
+          const hazards = data.maneuver.secondary_hazards.map(h => `#${h.object_id}`).join(', ');
+          safetyStatus.textContent = `UNSAFE (Secondary collision with ${hazards})`;
+          safetyStatus.style.color = "#ff0055";
+        }
       } else {
         burnPanel.classList.remove('active');
       }
+
+      if (!simActive) {
+        window.lastAnalysisData = data;
+      }
+    }
+
+    // Simulation state
+    let simInterval = null;
+    let simActive = false;
+    let simData = null;
+    let simElapsedMin = 0;
+    let isBurnExecuted = false;
+
+    function toggleSimulation() {
+      if (simActive) {
+        stopSimulation();
+      } else {
+        startSimulation();
+      }
+    }
+
+    function startSimulation() {
+      if (!window.lastAnalysisData) {
+        alert("Please run an analysis first to load telemetry data.");
+        return;
+      }
+      
+      simActive = true;
+      simElapsedMin = 0;
+      isBurnExecuted = false;
+      simData = JSON.parse(JSON.stringify(window.lastAnalysisData)); // Deep copy
+      
+      document.getElementById('sim-status-label').textContent = "RUNNING";
+      document.getElementById('sim-status-label').style.background = "#ff0055";
+      document.getElementById('sim-toggle-btn').textContent = "STOP SIMULATION";
+      document.getElementById('sim-toggle-btn').style.background = "rgba(255,255,255,0.08)";
+      document.getElementById('sim-toggle-btn').style.color = "#fff";
+      document.getElementById('sim-reset-btn').disabled = false;
+      document.getElementById('sim-reset-btn').style.color = "#fff";
+      document.getElementById('sim-reset-btn').style.background = "rgba(255,255,255,0.05)";
+      
+      // Disable input controls during simulation
+      document.querySelectorAll('.scenario-btn, .action-btn:not(#sim-toggle-btn):not(#sim-reset-btn)').forEach(b => b.style.pointerEvents = 'none');
+      
+      // Simulation loop: 1.5 seconds = 5 minutes of orbital drift
+      simInterval = setInterval(tickSimulation, 1500);
+    }
+
+    function stopSimulation() {
+      simActive = false;
+      clearInterval(simInterval);
+      document.getElementById('sim-status-label').textContent = "PAUSED";
+      document.getElementById('sim-status-label').style.background = "rgba(255,255,255,0.1)";
+      document.getElementById('sim-toggle-btn').textContent = "RESUME SIMULATION";
+      document.getElementById('sim-toggle-btn').style.background = "var(--theme-accent)";
+      document.getElementById('sim-toggle-btn').style.color = "#000";
+    }
+
+    function resetSimulation() {
+      simActive = false;
+      clearInterval(simInterval);
+      simElapsedMin = 0;
+      isBurnExecuted = false;
+      
+      document.getElementById('sim-status-label').textContent = "OFF";
+      document.getElementById('sim-status-label').style.background = "rgba(255,255,255,0.1)";
+      document.getElementById('sim-toggle-btn').textContent = "START SIMULATION";
+      document.getElementById('sim-toggle-btn').style.background = "var(--theme-accent)";
+      document.getElementById('sim-toggle-btn').style.color = "#000";
+      document.getElementById('sim-reset-btn').disabled = true;
+      document.getElementById('sim-reset-btn').style.color = "rgba(255,255,255,0.5)";
+      document.getElementById('sim-reset-btn').style.background = "rgba(255,255,255,0.05)";
+      
+      // Re-enable input controls
+      document.querySelectorAll('.scenario-btn, .action-btn').forEach(b => b.style.pointerEvents = 'auto');
+      
+      if (window.lastAnalysisData) {
+        updateUI(window.lastAnalysisData);
+      }
+    }
+
+    function tickSimulation() {
+      simElapsedMin += 5;
+      
+      if (!simData.conjunctions || simData.conjunctions.length === 0) {
+        stopSimulation();
+        return;
+      }
+      
+      const primaryTca = simData.conjunctions[0].time_to_closest_approach_min;
+      const maneuver = simData.maneuver;
+      
+      // Determine time until scheduled burn
+      let burnLeadMin = maneuver ? maneuver.burn_lead_time_min : 5.0;
+      let minutesUntilBurn = Math.max(0.0, primaryTca - burnLeadMin);
+      
+      // Check if we need to execute thruster burn
+      if (maneuver && simElapsedMin >= minutesUntilBurn && !isBurnExecuted) {
+        isBurnExecuted = true;
+        // Visual thruster burn animation
+        const threatAlert = document.getElementById('threat-alert');
+        threatAlert.className = 'alert-banner warning';
+        threatAlert.style.background = 'linear-gradient(135deg, #ff9f1c 0%, #ff6b6b 100%)';
+        threatAlert.textContent = `🔥 EXECUTING AUTONOMOUS EVASIVE BURN (Delta-V: ${npNorm(maneuver.delta_v_rtn).toFixed(4)} m/s)...`;
+        
+        setTimeout(() => {
+          // Apply burn impact (displace debris out of collision path)
+          simData.conjunctions.forEach((conj, idx) => {
+            if (idx === 0) {
+              conj.distance_km = maneuver.post_maneuver_safety_km;
+              conj.risk_level = "NOMINAL";
+            } else {
+              // If secondary hazard existed, update to post-maneuver distance
+              const hazard = maneuver.secondary_hazards.find(h => h.object_id === conj.object_id);
+              if (hazard) {
+                conj.distance_km = hazard.post_maneuver_distance_km;
+                conj.risk_level = "NOMINAL";
+              }
+            }
+          });
+          simData.maneuver_required = false; // Resolved!
+          updateUI(simData);
+        }, 1500);
+        
+        return; // Pause UI updates during thruster burn animation
+      }
+      
+      // Decay TCA for all conjunctions
+      simData.conjunctions.forEach(conj => {
+        conj.time_to_closest_approach_min = Math.max(0.0, conj.time_to_closest_approach_min - 5);
+      });
+      
+      // Stop simulation if closest threat TCA hits 0
+      if (simData.conjunctions[0].time_to_closest_approach_min <= 0) {
+        clearInterval(simInterval);
+        simActive = false;
+        document.getElementById('sim-status-label').textContent = "COMPLETED";
+        document.getElementById('sim-status-label').style.background = "#00f5d4";
+        document.getElementById('sim-status-label').style.color = "#000";
+        return;
+      }
+      
+      updateUI(simData);
+    }
+    
+    function npNorm(arr) {
+      return Math.sqrt(arr.reduce((sum, val) => sum + val*val, 0));
     }
 
     // Initialize WebSockets and default state on load
