@@ -1846,7 +1846,45 @@
 
     // Initialize WebSockets and default state on load
     window.onload = () => {
-      loadScenario('critical');
+      const urlParams = new URLSearchParams(window.location.search);
+      const primaryId = urlParams.get('primary_id');
+      const secondaryId = urlParams.get('secondary_id');
+
+      if (primaryId && secondaryId) {
+        fetch('/live-tles')
+          .then(response => {
+            if (!response.ok) throw new Error("Failed to load TLE list");
+            return response.json();
+          })
+          .then(tles => {
+            const p = tles[primaryId];
+            const s = tles[secondaryId];
+            if (p && s) {
+              document.getElementById('sat-id').value = primaryId;
+              document.getElementById('sat-name').value = p.name;
+              document.getElementById('sat-tle').value = p.line1 + '\n' + p.line2;
+
+              document.getElementById('deb-id').value = secondaryId;
+              document.getElementById('deb-name').value = s.name;
+              document.getElementById('deb-tle').value = s.line1 + '\n' + s.line2;
+
+              document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
+
+              if (is3DActive && is3DInitialized) {
+                update3DVisualizer(p.line1 + '\n' + p.line2, s.line1 + '\n' + s.line2, 1.0);
+              }
+            } else {
+              loadScenario('critical');
+            }
+          })
+          .catch(err => {
+            console.error("Error loading query TLEs:", err);
+            loadScenario('critical');
+          });
+      } else {
+        loadScenario('critical');
+      }
+
       connectWS();
       fetchHistory();
     };
