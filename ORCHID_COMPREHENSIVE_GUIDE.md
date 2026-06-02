@@ -216,6 +216,32 @@ Following the Phase 5 scalar optimizations and Julian Date mapping:
 
 ---
 
+---
+
+## 9. Live Conjunction Feed & Space Traffic Dashboard (Phase 6)
+
+In the latest update (Phase 6), ORCHID was extended from an on-demand REST analyzer to a live, continuous Space Traffic Control platform monitoring real conjunction pairs in orbit.
+
+### A. Automatic Ingestion & Risk Scoring
+* **CelesTrak SOCRATES Scraper**: Scrapes the SOCRATES feed (`table-socrates.php`) to extract the top 20 highest-risk orbital conjunction pairs.
+* **Dynamic Raw TLE Resolving**: Downloads two-line element sets for each identifier using `celestrak.org`'s General Perturbations (GP) API in real-time.
+* **$J_2$+Drag Scoring**: Evaluates the retrieved pairs using our vectorized numerical dynamics engine over a 168-hour window, automatically classifying them into risk level categories (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) and storing the top 20 pairs in `live_conjunctions.json`.
+
+### B. APScheduler Background Daemon
+* **Trigger Mechanics**: Initiates a background worker on startup that runs immediately, then executes periodically every 6 hours without blocking the FastAPI HTTP event loop.
+* **Graceful Shutdown**: The scheduler hooks into the FastAPI `shutdown` event, ensuring active threads are cleaned up correctly.
+
+### C. Live Interactive b-Plane Radar Dashboard
+* **Dynamic HTML5 Canvas Radar**: An elegant glassmorphic dashboard served at `/dashboard` that renders:
+  - Concentric range markers at 2.5, 5, 7.5, and 10 km scales.
+  - A glowing, rotating sweep beam simulating real radar sweeps.
+  - Color-coded conjunction vectors connecting the central primary satellite (green) and relative debris positions (red/orange/yellow based on threat levels).
+* **Sync Channels**: Pushes updates using WebSockets (`/ws/telemetry`) every 30 seconds with a 15-second client-side polling fallback.
+* **Detailed Conjunction Table**: Lists NORAD IDs, relative ranges, TCAs, scientific collision probabilities ($P_c$), and risk badges.
+* **Maneuver Link Integration**: Each row contains an **Assess Avoidance** link passing query parameters (`?primary_id=...&secondary_id=...`). The main `/ui` page dynamically reads these parameters, resolves the TLEs from our new `/live-tles` endpoint, pre-populates the forms, and initiates the 3D orbital trajectory simulation instantly.
+
+---
+
 ### File Location
 * **Workspace copy**: `C:/Users/LAKSHMI/orchid-api/ORCHID_COMPREHENSIVE_GUIDE.md`
 * **System Artifact**: `C:/Users/LAKSHMI/.gemini/antigravity-cli/brain/45f81805-8fbd-4bcc-ac15-d27cd650722f/orchid_comprehensive_guide.md`
