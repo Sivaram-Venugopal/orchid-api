@@ -175,6 +175,7 @@ def calculate_mesh_probability(C_2D, d, sat_length=12.0, sat_width=3.0):
     return min(1.0, max(0.0, float(prob_mesh)))
 
 def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
+    from physics import propagate_rk4
     deb_id, deb_tle1, deb_tle2 = get_tle_fields(debris)
     deb_rec = Satrec.twoline2rv(deb_tle1, deb_tle2)
     
@@ -185,52 +186,77 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     min_coarse_dist = float('inf')
     coarse_min_time_offset = 0
     
-    for step in range(num_coarse_steps + 1):
-        offset = step * coarse_step
-        dt = start_time + timedelta(seconds=offset)
+    deb_states_by_offset = {}
+    deb_pos_epoch, deb_vel_epoch = get_state_at_time(deb_rec, start_time)
+    
+    if deb_pos_epoch is not None:
+        deb_pos_current, deb_vel_current = deb_pos_epoch.copy(), deb_vel_epoch.copy()
         
-        sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
-        deb_pos, _ = get_state_at_time(deb_rec, dt)
+        for step in range(num_coarse_steps + 1):
+            offset = step * coarse_step
+            if offset > 0:
+                # 10 minutes step with 30s internal RK4 step sizes for stability
+                pos_m, vel_ms = propagate_rk4(
+                    deb_pos_current.tolist(), deb_vel_current.tolist(), 600.0,
+                    mass=250.0, area=4.0, drag_coeff=2.2, step_size_sec=30.0
+                )
+                deb_pos_current = np.array(pos_m)
+                deb_vel_current = np.array(vel_ms)
+                
+            deb_states_by_offset[offset] = (deb_pos_current.copy(), deb_vel_current.copy())
+            
+            sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
+            if sat_pos is not None:
+                dist = np.linalg.norm(sat_pos - deb_pos_current)
+                if dist < min_coarse_dist:
+                    min_coarse_dist = dist
+                    coarse_min_time_offset = offset
+    else:
+        return None
         
-        if sat_pos is None or deb_pos is None:
-            continue
-            
-        dist = np.linalg.norm(sat_pos - deb_pos)
-        if dist < min_coarse_dist:
-            min_coarse_dist = dist
-            coarse_min_time_offset = offset
-            
     # Drop pair if absolute minimum distance in the 24h coarse sweep is > 100 km
     if min_coarse_dist > 100000.0:
         return None
         
     # --- STAGE 3: FINE SEARCH (10-Second Sweep) ---
-    min_dist_m = min_coarse_dist
+    min_dist_m = float('inf')
     tca_offset = coarse_min_time_offset
     
     fine_step = 10  # 10 seconds
     start_offset = max(0, coarse_min_time_offset - 600)
     end_offset = min(total_seconds, coarse_min_time_offset + 600)
     
-    for offset in range(int(start_offset), int(end_offset) + 1, fine_step):
-        dt = start_time + timedelta(seconds=offset)
-        
-        sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
-        deb_pos, _ = get_state_at_time(deb_rec, dt)
-        
-        if sat_pos is None or deb_pos is None:
-            continue
-            
-        dist = np.linalg.norm(sat_pos - deb_pos)
-        if dist < min_dist_m:
-            min_dist_m = dist
-            tca_offset = offset
-            
-    # Calculate parameters at TCA
-    tca_dt = start_time + timedelta(seconds=tca_offset)
-    sat_pos_tca, sat_vel_tca = sat_states_by_offset.get(tca_offset, (None, None))
-    deb_pos_tca, deb_vel_tca = get_state_at_time(deb_rec, tca_dt)
+    deb_pos_tca = None
+    deb_vel_tca = None
     
+    deb_pos_fine, deb_vel_fine = deb_states_by_offset.get(start_offset, (None, None))
+    if deb_pos_fine is not None:
+        deb_pos_current = deb_pos_fine.copy()
+        deb_vel_current = deb_vel_fine.copy()
+        
+        deb_pos_tca = deb_pos_fine.copy()
+        deb_vel_tca = deb_vel_fine.copy()
+        
+        for offset in range(int(start_offset), int(end_offset) + 1, fine_step):
+            if offset > start_offset:
+                pos_m, vel_ms = propagate_rk4(
+                    deb_pos_current.tolist(), deb_vel_current.tolist(), 10.0,
+                    mass=250.0, area=4.0, drag_coeff=2.2, step_size_sec=10.0
+                )
+                deb_pos_current = np.array(pos_m)
+                deb_vel_current = np.array(vel_ms)
+                
+            sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
+            if sat_pos is None:
+                continue
+                
+            dist = np.linalg.norm(sat_pos - deb_pos_current)
+            if dist < min_dist_m:
+                min_dist_m = dist
+                tca_offset = offset
+                deb_pos_tca = deb_pos_current.copy()
+                deb_vel_tca = deb_vel_current.copy()
+                
     distance_km = min_dist_m / 1000.0
     time_to_ca_min = tca_offset / 60.0
     
@@ -289,12 +315,28 @@ def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None,
     else:
         deb_cov_rtn = np.array(deb_cov_rtn)
 
-    # 1. Pre-propagate the satellite at 10-second resolution for the total_seconds horizon
+    # 1. Pre-propagate the satellite at 10-second resolution for the total_seconds horizon (RK4 perturbed integration)
+    from physics import propagate_rk4
     sat_states_by_offset = {}
-    for offset in range(0, int(total_seconds) + 1, 10):
-        dt = start_time + timedelta(seconds=offset)
-        pos, vel = get_state_at_time(sat_rec, dt)
-        sat_states_by_offset[offset] = (pos, vel)
+    pos_epoch, vel_epoch = get_state_at_time(sat_rec, start_time)
+    if pos_epoch is not None:
+        pos_current, vel_current = pos_epoch.copy(), vel_epoch.copy()
+        for offset in range(0, int(total_seconds) + 1, 10):
+            if offset == 0:
+                sat_states_by_offset[offset] = (pos_current.copy(), vel_current.copy())
+            else:
+                pos_m, vel_ms = propagate_rk4(
+                    pos_current.tolist(), vel_current.tolist(), 10.0,
+                    mass=550.0, area=12.0, drag_coeff=2.2, step_size_sec=10.0
+                )
+                pos_current = np.array(pos_m)
+                vel_current = np.array(vel_ms)
+                sat_states_by_offset[offset] = (pos_current.copy(), vel_current.copy())
+    else:
+        for offset in range(0, int(total_seconds) + 1, 10):
+            dt = start_time + timedelta(seconds=offset)
+            pos, vel = get_state_at_time(sat_rec, dt)
+            sat_states_by_offset[offset] = (pos, vel)
         
     # 2. Main-thread grid filtering (apogee/perigee screening)
     filtered_debris_list = []
