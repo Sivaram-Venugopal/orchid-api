@@ -662,9 +662,14 @@
         </div>
       </div>
 
-      <button class="btn-action" onclick="runSimulation()">
-        ⚡ Run Conjunction Analysis
-      </button>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <button class="btn-action" onclick="runSimulation()">
+          ⚡ Run Conjunction Analysis
+        </button>
+        <button class="btn-action" style="background: linear-gradient(135deg, #ff9f1c 0%, #ff6b6b 100%); box-shadow: 0 4px 20px rgba(255, 159, 28, 0.3);" onclick="planRendezvous()">
+          🛰️ Plan ADR Rendezvous Interception
+        </button>
+      </div>
     </div>
 
     <!-- RIGHT PANEL: Radar & Results -->
@@ -1027,6 +1032,12 @@
     }
 
     function updateUI(data) {
+      // Clear any active rendezvous path when running standard analysis
+      if (is3DInitialized && scene && rendezvousPathMesh) {
+        scene.remove(rendezvousPathMesh);
+        rendezvousPathMesh = null;
+      }
+      
       const threatAlert = document.getElementById('threat-alert');
       const debrisPoint = document.getElementById('radar-debris-point');
       const ellipseEl = document.getElementById('cov-ellipse');
@@ -1725,6 +1736,112 @@
       }
       
       renderer.render(scene, camera);
+    }
+
+    // Active Debris Removal Proximity Operations Rendezvous Plan
+    async function planRendezvous() {
+      const loader = document.getElementById('loading-overlay');
+      loader.style.display = 'flex';
+      updateProgress(20);
+      document.getElementById('loading-status').textContent = "Calculating ADR Rendezvous Trajectory...";
+
+      const payload = {
+        satellite: {
+          norad_id: document.getElementById('sat-id').value,
+          tle1: document.getElementById('sat-tle').value.split('\n')[0].trim(),
+          tle2: document.getElementById('sat-tle').value.split('\n')[1].trim()
+        },
+        debris: {
+          norad_id: document.getElementById('deb-id').value,
+          tle1: document.getElementById('deb-tle').value.split('\n')[0].trim(),
+          tle2: document.getElementById('deb-tle').value.split('\n')[1].trim()
+        },
+        time_of_flight_min: 45.0
+      };
+
+      try {
+        const response = await fetch('/rendezvous', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          throw new Error("Targeting resonance encountered.");
+        }
+
+        const data = await response.json();
+        updateProgress(100);
+        
+        setTimeout(() => {
+          loader.style.display = 'none';
+          
+          const threatAlert = document.getElementById('threat-alert');
+          threatAlert.className = 'alert-banner high';
+          threatAlert.style.background = 'linear-gradient(135deg, #ff9f1c 0%, #ff6b6b 100%)';
+          threatAlert.style.color = '#fff';
+          threatAlert.innerHTML = `🛰️ <strong>ACTIVE DEBRIS REMOVAL PLAN ACTIVE:</strong> Chaser satellite intercepts target in 45m. Delta-V: [R: ${data.delta_v_rtn[0].toFixed(4)}, T: ${data.delta_v_rtn[1].toFixed(4)}, N: ${data.delta_v_rtn[2].toFixed(4)}] m/s. Fuel: ${data.fuel_cost_kg} kg.`;
+          
+          // Switch to 3D Globe view automatically to display the transfer trajectory!
+          const radar2d = document.getElementById('radar-2d');
+          const radar3d = document.getElementById('radar-3d');
+          const btn = document.getElementById('view-toggle-btn');
+          
+          radar2d.style.display = 'none';
+          radar3d.style.display = 'block';
+          btn.textContent = '2D RADAR VIEW';
+          is3DActive = true;
+          
+          if (!is3DInitialized) {
+            init3D();
+          }
+          
+          plotRendezvousTrajectory(data);
+        }, 300);
+
+      } catch (err) {
+        console.error(err);
+        alert("Rendezvous calculation failed: " + err.message);
+        loader.style.display = 'none';
+      }
+    }
+
+    let rendezvousPathMesh;
+    
+    function plotRendezvousTrajectory(data) {
+      if (!is3DInitialized || !scene) return;
+      
+      if (rendezvousPathMesh) scene.remove(rendezvousPathMesh);
+      
+      const points = [];
+      const earthRadius = 3.5;
+      const metersToThreeUnits = earthRadius / 6378137.0; // scale factor
+      
+      data.transfer_points.forEach(pt => {
+        points.push(new THREE.Vector3(
+          pt[0] * metersToThreeUnits,
+          pt[1] * metersToThreeUnits,
+          pt[2] * metersToThreeUnits
+        ));
+      });
+      
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineDashedMaterial({
+        color: 0xffaa00, // glowing amber transfer orbit path
+        dashSize: 0.25,
+        gapSize: 0.1,
+        transparent: true,
+        opacity: 0.95
+      });
+      
+      rendezvousPathMesh = new THREE.Line(geo, mat);
+      rendezvousPathMesh.computeLineDistances();
+      scene.add(rendezvousPathMesh);
+      
+      // Update orbits visual coordinates too
+      const satTle = document.getElementById('sat-tle').value;
+      const debTle = document.getElementById('deb-tle').value;
+      update3DVisualizer(satTle, debTle, 0.0);
     }
 
     // Initialize WebSockets and default state on load

@@ -554,6 +554,53 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+class RendezvousRequest(BaseModel):
+    satellite: TLEInput
+    debris: TLEInput
+    time_of_flight_min: Optional[float] = 45.0
+
+@app.post("/rendezvous")
+def compute_rendezvous(request: RendezvousRequest):
+    try:
+        from physics import tle_to_state
+        from rendezvous import plan_cw_rendezvous
+        
+        # Initial states (chaser and target)
+        chaser_state = tle_to_state(request.satellite.tle1, request.satellite.tle2)
+        target_state = tle_to_state(request.debris.tle1, request.debris.tle2)
+        
+        r_chaser, v_chaser = chaser_state[:3], chaser_state[3:]
+        r_target, v_target = target_state[:3], target_state[3:]
+        
+        # Calculate mean motion omega from target TLE
+        try:
+            n_day = float(request.debris.tle2[52:63].strip())
+            omega = n_day * (2.0 * np.pi / 86400.0)
+        except Exception:
+            omega = 0.0011 # default LEO mean motion
+            
+        dt_sec = request.time_of_flight_min * 60.0
+        
+        dv_rtn, transfer_points = plan_cw_rendezvous(
+            r_chaser, v_chaser, r_target, v_target, dt_sec, omega
+        )
+        
+        # Estimate fuel cost using Tsiolkovsky rocket equation
+        from physics import tsiolkovsky
+        DRY_MASS = 550.0
+        fuel_cost = tsiolkovsky(np.linalg.norm(dv_rtn), DRY_MASS + 50.0)
+        
+        return {
+            "delta_v_rtn": dv_rtn,
+            "fuel_cost_kg": round(float(fuel_cost), 4),
+            "transfer_points": transfer_points,
+            "time_of_flight_min": request.time_of_flight_min,
+            "message": "Active Debris Removal (ADR) relative rendezvous trajectory computed successfully."
+        }
+    except Exception as e:
+        logger.error(f"Rendezvous calculation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
