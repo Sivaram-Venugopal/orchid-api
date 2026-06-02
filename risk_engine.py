@@ -175,9 +175,16 @@ def calculate_mesh_probability(C_2D, d, sat_length=12.0, sat_width=3.0):
     return min(1.0, max(0.0, float(prob_mesh)))
 
 def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
-    from physics import propagate_rk4
+    from physics import propagate_rk4_trajectory
+    import math
+    from sgp4.api import jday
+    
     deb_id, deb_tle1, deb_tle2 = get_tle_fields(debris)
     deb_rec = Satrec.twoline2rv(deb_tle1, deb_tle2)
+    
+    # Pre-calculate Julian Date of start_time to avoid slow datetime arithmetic in loop
+    jd_epoch, fr_epoch = jday(start_time.year, start_time.month, start_time.day,
+                              start_time.hour, start_time.minute, start_time.second + start_time.microsecond/1e6)
     
     # --- STAGE 2: THE COARSE SEARCH (10-Minute Sweep using fast SGP4) ---
     coarse_step = 600
@@ -188,15 +195,20 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     
     for step in range(num_coarse_steps + 1):
         offset = step * coarse_step
-        dt = start_time + timedelta(seconds=offset)
         
         sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
-        deb_pos, _ = get_state_at_time(deb_rec, dt)
-        
-        if sat_pos is None or deb_pos is None:
+        if sat_pos is None:
             continue
             
-        dist = np.linalg.norm(sat_pos - deb_pos)
+        e, r, v = deb_rec.sgp4(jd_epoch, fr_epoch + offset / 86400.0)
+        if e != 0:
+            continue
+            
+        dx = sat_pos[0] - r[0] * 1000.0
+        dy = sat_pos[1] - r[1] * 1000.0
+        dz = sat_pos[2] - r[2] * 1000.0
+        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        
         if dist < min_coarse_dist:
             min_coarse_dist = dist
             coarse_min_time_offset = offset
@@ -217,24 +229,29 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     deb_vel_tca = None
     
     # Initialize numerical integration from the SGP4 state at start_offset
-    start_dt = start_time + timedelta(seconds=start_offset)
-    deb_pos_start, deb_vel_start = get_state_at_time(deb_rec, start_dt)
-    
+    e, r, v = deb_rec.sgp4(jd_epoch, fr_epoch + start_offset / 86400.0)
+    if e == 0:
+        deb_pos_start = np.array([r[0] * 1000.0, r[1] * 1000.0, r[2] * 1000.0])
+        deb_vel_start = np.array([v[0] * 1000.0, v[1] * 1000.0, v[2] * 1000.0])
+    else:
+        deb_pos_start, deb_vel_start = None, None
+        
     if deb_pos_start is not None:
-        deb_pos_current = deb_pos_start.copy()
-        deb_vel_current = deb_vel_start.copy()
+        deb_total_sec = end_offset - start_offset
+        deb_traj = propagate_rk4_trajectory(
+            deb_pos_start.tolist(), deb_vel_start.tolist(), deb_total_sec,
+            mass=250.0, area=4.0, drag_coeff=2.2, step_size_sec=10.0
+        )
         
         deb_pos_tca = deb_pos_start.copy()
         deb_vel_tca = deb_vel_start.copy()
         
         for offset in range(int(start_offset), int(end_offset) + 1, fine_step):
-            if offset > start_offset:
-                pos_m, vel_ms = propagate_rk4(
-                    deb_pos_current.tolist(), deb_vel_current.tolist(), 10.0,
-                    mass=250.0, area=4.0, drag_coeff=2.2, step_size_sec=10.0
-                )
-                deb_pos_current = np.array(pos_m)
-                deb_vel_current = np.array(vel_ms)
+            deb_offset = offset - start_offset
+            deb_state = deb_traj.get(deb_offset)
+            if deb_state is None:
+                continue
+            deb_pos_current, deb_vel_current = deb_state
                 
             sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
             if sat_pos is None:
@@ -307,23 +324,15 @@ def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None,
         deb_cov_rtn = np.array(deb_cov_rtn)
 
     # 1. Pre-propagate the satellite at 10-second resolution for the total_seconds horizon (RK4 perturbed integration)
-    from physics import propagate_rk4
-    sat_states_by_offset = {}
+    from physics import propagate_rk4_trajectory
     pos_epoch, vel_epoch = get_state_at_time(sat_rec, start_time)
     if pos_epoch is not None:
-        pos_current, vel_current = pos_epoch.copy(), vel_epoch.copy()
-        for offset in range(0, int(total_seconds) + 1, 10):
-            if offset == 0:
-                sat_states_by_offset[offset] = (pos_current.copy(), vel_current.copy())
-            else:
-                pos_m, vel_ms = propagate_rk4(
-                    pos_current.tolist(), vel_current.tolist(), 10.0,
-                    mass=550.0, area=12.0, drag_coeff=2.2, step_size_sec=10.0
-                )
-                pos_current = np.array(pos_m)
-                vel_current = np.array(vel_ms)
-                sat_states_by_offset[offset] = (pos_current.copy(), vel_current.copy())
+        sat_states_by_offset = propagate_rk4_trajectory(
+            pos_epoch.tolist(), vel_epoch.tolist(), total_seconds,
+            mass=550.0, area=12.0, drag_coeff=2.2, step_size_sec=10.0
+        )
     else:
+        sat_states_by_offset = {}
         for offset in range(0, int(total_seconds) + 1, 10):
             dt = start_time + timedelta(seconds=offset)
             pos, vel = get_state_at_time(sat_rec, dt)
