@@ -179,46 +179,33 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     deb_id, deb_tle1, deb_tle2 = get_tle_fields(debris)
     deb_rec = Satrec.twoline2rv(deb_tle1, deb_tle2)
     
-    # --- STAGE 2: THE COARSE SEARCH (10-Minute Sweep) ---
+    # --- STAGE 2: THE COARSE SEARCH (10-Minute Sweep using fast SGP4) ---
     coarse_step = 600
     num_coarse_steps = int(total_seconds / coarse_step)
     
     min_coarse_dist = float('inf')
     coarse_min_time_offset = 0
     
-    deb_states_by_offset = {}
-    deb_pos_epoch, deb_vel_epoch = get_state_at_time(deb_rec, start_time)
-    
-    if deb_pos_epoch is not None:
-        deb_pos_current, deb_vel_current = deb_pos_epoch.copy(), deb_vel_epoch.copy()
+    for step in range(num_coarse_steps + 1):
+        offset = step * coarse_step
+        dt = start_time + timedelta(seconds=offset)
         
-        for step in range(num_coarse_steps + 1):
-            offset = step * coarse_step
-            if offset > 0:
-                # 10 minutes step with 30s internal RK4 step sizes for stability
-                pos_m, vel_ms = propagate_rk4(
-                    deb_pos_current.tolist(), deb_vel_current.tolist(), 600.0,
-                    mass=250.0, area=4.0, drag_coeff=2.2, step_size_sec=30.0
-                )
-                deb_pos_current = np.array(pos_m)
-                deb_vel_current = np.array(vel_ms)
-                
-            deb_states_by_offset[offset] = (deb_pos_current.copy(), deb_vel_current.copy())
+        sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
+        deb_pos, _ = get_state_at_time(deb_rec, dt)
+        
+        if sat_pos is None or deb_pos is None:
+            continue
             
-            sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
-            if sat_pos is not None:
-                dist = np.linalg.norm(sat_pos - deb_pos_current)
-                if dist < min_coarse_dist:
-                    min_coarse_dist = dist
-                    coarse_min_time_offset = offset
-    else:
-        return None
-        
+        dist = np.linalg.norm(sat_pos - deb_pos)
+        if dist < min_coarse_dist:
+            min_coarse_dist = dist
+            coarse_min_time_offset = offset
+            
     # Drop pair if absolute minimum distance in the 24h coarse sweep is > 100 km
     if min_coarse_dist > 100000.0:
         return None
         
-    # --- STAGE 3: FINE SEARCH (10-Second Sweep) ---
+    # --- STAGE 3: FINE SEARCH (10-Second Sweep using High-Fidelity perturbed RK4 propagation) ---
     min_dist_m = float('inf')
     tca_offset = coarse_min_time_offset
     
@@ -229,13 +216,16 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     deb_pos_tca = None
     deb_vel_tca = None
     
-    deb_pos_fine, deb_vel_fine = deb_states_by_offset.get(start_offset, (None, None))
-    if deb_pos_fine is not None:
-        deb_pos_current = deb_pos_fine.copy()
-        deb_vel_current = deb_vel_fine.copy()
+    # Initialize numerical integration from the SGP4 state at start_offset
+    start_dt = start_time + timedelta(seconds=start_offset)
+    deb_pos_start, deb_vel_start = get_state_at_time(deb_rec, start_dt)
+    
+    if deb_pos_start is not None:
+        deb_pos_current = deb_pos_start.copy()
+        deb_vel_current = deb_vel_start.copy()
         
-        deb_pos_tca = deb_pos_fine.copy()
-        deb_vel_tca = deb_vel_fine.copy()
+        deb_pos_tca = deb_pos_start.copy()
+        deb_vel_tca = deb_vel_start.copy()
         
         for offset in range(int(start_offset), int(end_offset) + 1, fine_step):
             if offset > start_offset:
@@ -257,6 +247,7 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
                 deb_pos_tca = deb_pos_current.copy()
                 deb_vel_tca = deb_vel_current.copy()
                 
+    sat_pos_tca, sat_vel_tca = sat_states_by_offset.get(tca_offset, (None, None))
     distance_km = min_dist_m / 1000.0
     time_to_ca_min = tca_offset / 60.0
     
