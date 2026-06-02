@@ -886,6 +886,20 @@
           document.getElementById('loading-overlay').style.display = 'none';
         } else if (data.type === 'observation') {
           addObservationLog(data.message);
+        } else if (data.type === 'covariance_update') {
+          // Update the covariance settings inputs
+          document.getElementById('sat-cov-r').value = data.std_r;
+          document.getElementById('sat-cov-t').value = data.std_t;
+          document.getElementById('sat-cov-n').value = data.std_n;
+          
+          // Log the tracker update
+          addObservationLog(data.message);
+          
+          // Re-trigger the analysis dynamically to recalculate risk under the updated state estimation
+          const loader = document.getElementById('loading-overlay');
+          if (!simActive && loader.style.display !== 'flex') {
+            runSimulation();
+          }
         }
       };
       

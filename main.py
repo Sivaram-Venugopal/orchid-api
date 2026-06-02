@@ -77,19 +77,82 @@ def log_to_db(satellite_id, overall_risk, conjunctions, maneuver_required, fuel_
 
 async def simulated_observation_feed():
     import random
-    from datetime import datetime
+    from datetime import datetime, timezone
+    from ukf import ukf_propagate, ukf_update
+    from risk_engine import get_state_at_time
+    from sgp4.api import Satrec
+    
     messages = [
-        "SSA radar track correction for NORAD #25544 (ISS): radial error reduced to 12.8m.",
-        "LeoLabs tracking pass completed for debris #36248: eccentricity correction applied.",
-        "Space-Track alert: New orbital element set (TLE) published for Sentinel-3A.",
         "ADCS sensor status: Gyroscope calibration successful. Orbit drift rate within limits.",
         "Live feed status: 14 radar track events processed in the last 60 seconds.",
         "NASA CARA conjunction screening pass complete: zero new hazards detected."
     ]
+    
     while True:
         await asyncio.sleep(8.0)
-        msg = random.choice(messages)
+        
+        # Check if there are active registered satellites in the UKF tracking pool
+        if active_ukf_filters and loop and manager.active_connections:
+            sat_id = list(active_ukf_filters.keys())[0]
+            sat_data = active_ukf_filters[sat_id]
+            
+            try:
+                now = datetime.now(timezone.utc)
+                dt_sec = (now - sat_data["last_time"]).total_seconds()
+                
+                # Minimum propagation step size
+                if dt_sec < 1.0:
+                    dt_sec = 8.0
+                    
+                # Setup process noise covariance Q
+                Q = np.diag([0.1, 0.1, 0.1, 1e-4, 1e-4, 1e-4])**2
+                
+                # 1. Propagate UKF state forward
+                x_pred, P_pred, sigmas_pred = ukf_propagate(
+                    sat_data["state"], sat_data["covariance"], dt_sec, Q
+                )
+                
+                # 2. Get true position using TLE at current time
+                sat_rec = Satrec.twoline2rv(sat_data["tle1"], sat_data["tle2"])
+                pos_true, _ = get_state_at_time(sat_rec, now)
+                
+                if pos_true is not None:
+                    # 3. Simulate noisy radar measurement (add 15 meters of random Gaussian noise)
+                    noise = np.random.normal(0.0, 15.0, 3)
+                    z = pos_true + noise
+                    
+                    # Measurement noise R: 15 meters standard deviation
+                    R = np.diag([15.0, 15.0, 15.0])**2
+                    
+                    # 4. Perform UKF measurement update (collapsing covariance!)
+                    x_updated, P_updated = ukf_update(x_pred, P_pred, sigmas_pred, z, R)
+                    
+                    # Store updated values
+                    sat_data["state"] = x_updated
+                    sat_data["covariance"] = P_updated
+                    sat_data["last_time"] = now
+                    
+                    # Extract updated RTN standard deviations
+                    std_r = float(np.sqrt(max(1.0, P_updated[0, 0])))
+                    std_t = float(np.sqrt(max(1.0, P_updated[1, 1])))
+                    std_n = float(np.sqrt(max(1.0, P_updated[2, 2])))
+                    
+                    # Broadcast standard deviation reductions to frontend!
+                    await manager.broadcast({
+                        "type": "covariance_update",
+                        "satellite_id": sat_id,
+                        "std_r": round(std_r, 1),
+                        "std_t": round(std_t, 1),
+                        "std_n": round(std_n, 1),
+                        "message": f"[{datetime.now().strftime('%H:%M:%S')}] LeoLabs tracking pass: UKF updated. Positional error contracted (Radial: {std_r:.1f}m, Transverse: {std_t:.1f}m, Normal: {std_n:.1f}m)."
+                    })
+                    continue
+            except Exception as e:
+                logger.error(f"Error in UKF background tracking loop: {e}")
+                
+        # Fallback to static messaging if no active UKF filter registered
         if loop and manager.active_connections:
+            msg = random.choice(messages)
             await manager.broadcast({
                 "type": "observation",
                 "message": f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
@@ -166,6 +229,33 @@ def get_cov_matrix(cov: Optional[CovarianceInput], default_std: List[float]) -> 
         std = [cov.r, cov.t, cov.n]
     return np.diag(std)**2
 
+active_ukf_filters = {}
+
+from datetime import datetime, timezone
+def register_active_satellite(satellite, request):
+    try:
+        from physics import tle_to_state
+        state_init = tle_to_state(satellite.tle1, satellite.tle2)
+        
+        # Build covariance in RTN frame (6x6 matrix, standard deviations squared)
+        std_r = request.satellite_covariance.r if request.satellite_covariance else 100.0
+        std_t = request.satellite_covariance.t if request.satellite_covariance else 500.0
+        std_n = request.satellite_covariance.n if request.satellite_covariance else 100.0
+        
+        # Velocity uncertainties are scaled to 1% of position uncertainties
+        cov_rtn = np.diag([std_r, std_t, std_n, std_r * 0.01, std_t * 0.01, std_n * 0.01])**2
+        
+        active_ukf_filters[satellite.norad_id] = {
+            "state": np.array(state_init),
+            "covariance": cov_rtn,
+            "tle1": satellite.tle1,
+            "tle2": satellite.tle2,
+            "last_time": datetime.now(timezone.utc)
+        }
+        logger.info(f"Registered active satellite {satellite.norad_id} in UKF tracking pool.")
+    except Exception as e:
+        logger.error(f"Failed to register active satellite for UKF: {e}")
+
 def resolve_request(request: ManeuverRequest):
     from catalog_manager import load_tle_catalog
     
@@ -190,6 +280,9 @@ def resolve_request(request: ManeuverRequest):
     else:
         raise HTTPException(status_code=422, detail="Either satellite or satellite_id must be provided")
         
+    # Register in UKF tracking pool
+    register_active_satellite(satellite, request)
+    
     return satellite, debris_pool
 
 # Background Task Worker
