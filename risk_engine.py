@@ -148,15 +148,8 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     prob = min(1.0, max(0.0, float(pc_approx)))
     return prob, C_2D
 
-def process_single_debris(debris, sat_rec, sat_perigee, sat_apogee, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
+def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
     deb_id, deb_tle1, deb_tle2 = get_tle_fields(debris)
-    
-    # --- STAGE 1: THE GRID FILTER (Apogee/Perigee Screening) ---
-    deb_perigee, deb_apogee = parse_apogee_perigee(deb_tle2)
-    # Apply 100 km safety margin buffer
-    if (sat_apogee + 100.0) < deb_perigee or (deb_apogee + 100.0) < sat_perigee:
-        return None
-        
     deb_rec = Satrec.twoline2rv(deb_tle1, deb_tle2)
     
     # --- STAGE 2: THE COARSE SEARCH (10-Minute Sweep) ---
@@ -170,7 +163,7 @@ def process_single_debris(debris, sat_rec, sat_perigee, sat_apogee, start_time, 
         offset = step * coarse_step
         dt = start_time + timedelta(seconds=offset)
         
-        sat_pos, _ = get_state_at_time(sat_rec, dt)
+        sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
         deb_pos, _ = get_state_at_time(deb_rec, dt)
         
         if sat_pos is None or deb_pos is None:
@@ -196,7 +189,7 @@ def process_single_debris(debris, sat_rec, sat_perigee, sat_apogee, start_time, 
     for offset in range(int(start_offset), int(end_offset) + 1, fine_step):
         dt = start_time + timedelta(seconds=offset)
         
-        sat_pos, _ = get_state_at_time(sat_rec, dt)
+        sat_pos, _ = sat_states_by_offset.get(offset, (None, None))
         deb_pos, _ = get_state_at_time(deb_rec, dt)
         
         if sat_pos is None or deb_pos is None:
@@ -209,7 +202,7 @@ def process_single_debris(debris, sat_rec, sat_perigee, sat_apogee, start_time, 
             
     # Calculate parameters at TCA
     tca_dt = start_time + timedelta(seconds=tca_offset)
-    sat_pos_tca, sat_vel_tca = get_state_at_time(sat_rec, tca_dt)
+    sat_pos_tca, sat_vel_tca = sat_states_by_offset.get(tca_offset, (None, None))
     deb_pos_tca, deb_vel_tca = get_state_at_time(deb_rec, tca_dt)
     
     if sat_pos_tca is not None and deb_pos_tca is not None and sat_vel_tca is not None and deb_vel_tca is not None:
@@ -268,6 +261,23 @@ def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None,
         deb_cov_rtn = np.diag([200.0, 1000.0, 200.0])**2
     else:
         deb_cov_rtn = np.array(deb_cov_rtn)
+
+    # 1. Pre-propagate the satellite at 10-second resolution for the total_seconds horizon
+    sat_states_by_offset = {}
+    for offset in range(0, int(total_seconds) + 1, 10):
+        dt = start_time + timedelta(seconds=offset)
+        pos, vel = get_state_at_time(sat_rec, dt)
+        sat_states_by_offset[offset] = (pos, vel)
+        
+    # 2. Main-thread grid filtering (apogee/perigee screening)
+    filtered_debris_list = []
+    for debris in debris_list:
+        _, _, deb_tle2 = get_tle_fields(debris)
+        deb_perigee, deb_apogee = parse_apogee_perigee(deb_tle2)
+        # Apply 100 km safety margin buffer
+        if (sat_apogee + 100.0) < deb_perigee or (deb_apogee + 100.0) < sat_perigee:
+            continue
+        filtered_debris_list.append(debris)
         
     conjunctions = []
     
@@ -275,9 +285,9 @@ def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None,
         futures = {
             executor.submit(
                 process_single_debris,
-                debris, sat_rec, sat_perigee, sat_apogee, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr
+                debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr
             ): debris
-            for debris in debris_list
+            for debris in filtered_debris_list
         }
         
         completed_count = 0
