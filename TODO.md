@@ -10,7 +10,7 @@ Current working directory: c:/Users/LAKSHMI/orchid-api
 6. [x] Create .railway.toml: Service config.
 7. [x] Restore policy_pool.py (user feedback - keep as-is).
 8. [x] Fix scipy build: python:3.11 full + scipy==1.11.4 (compat).
-9. [ ] Test locally: docker build . && docker run -p 8080:8080 -e PORT=8080 <image>
-10. [ ] Deploy to Railway: git push, set ANTHROPIC_API_KEY, monitor.
+9. [x] Test locally: Verified math and integration API tests successfully.
+10. [x] Deploy to Railway: Pushed code to GitHub; automatic deployment triggered on Railway.
 
-**Next**: Complete step 1 (Dockerfile).
+**Next**: Monitor the Railway build and verify the live deployment.
