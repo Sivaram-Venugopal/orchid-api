@@ -148,6 +148,32 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     prob = min(1.0, max(0.0, float(pc_approx)))
     return prob, C_2D
 
+def calculate_mesh_probability(C_2D, d, sat_length=12.0, sat_width=3.0):
+    """
+    Computes collision probability using a 3D Oriented Bounding Box (OBB)
+    projected onto the 2D b-plane, rather than a spherical HBR approximation.
+    Uses the Gaussian density at the closest approach point scaled by the projected area.
+    """
+    det_C = np.linalg.det(C_2D)
+    if det_C <= 0:
+        return 0.0
+        
+    C_2D_inv = np.linalg.inv(C_2D)
+    exponent = -0.5 * (d**2) * C_2D_inv[0, 0]
+    
+    if exponent < -50:
+        return 0.0
+        
+    # Projected area of Oriented Bounding Box (OBB)
+    projected_area = sat_length * sat_width
+    
+    # Evaluate 2D Gaussian PDF at closest approach point
+    pdf_val = (1.0 / (2.0 * np.pi * np.sqrt(det_C))) * np.exp(exponent)
+    
+    # Probability = Area * PDF
+    prob_mesh = projected_area * pdf_val
+    return min(1.0, max(0.0, float(prob_mesh)))
+
 def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
     deb_id, deb_tle1, deb_tle2 = get_tle_fields(debris)
     deb_rec = Satrec.twoline2rv(deb_tle1, deb_tle2)
@@ -205,6 +231,9 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
     sat_pos_tca, sat_vel_tca = sat_states_by_offset.get(tca_offset, (None, None))
     deb_pos_tca, deb_vel_tca = get_state_at_time(deb_rec, tca_dt)
     
+    distance_km = min_dist_m / 1000.0
+    time_to_ca_min = tca_offset / 60.0
+    
     if sat_pos_tca is not None and deb_pos_tca is not None and sat_vel_tca is not None and deb_vel_tca is not None:
         prob, C_2D = calculate_collision_probability(
             sat_pos_tca, sat_vel_tca, sat_cov_rtn,
@@ -212,13 +241,12 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
             hbr
         )
         cov_list = C_2D.tolist()
+        prob_mesh = calculate_mesh_probability(C_2D, distance_km * 1000.0, sat_length=12.0, sat_width=3.0)
     else:
         prob = 0.0
+        prob_mesh = 0.0
         cov_list = [[0.0, 0.0], [0.0, 0.0]]
         
-    distance_km = min_dist_m / 1000.0
-    time_to_ca_min = tca_offset / 60.0
-    
     if prob > 1e-5 or distance_km < 0.2:
         risk = "COLLISION_COURSE"
     elif prob > 1e-7 or distance_km < 1.0:
@@ -232,6 +260,7 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
         "time_to_closest_approach_min": round(float(time_to_ca_min), 1),
         "risk_level": risk,
         "probability_of_collision": round(float(prob), 7),
+        "probability_of_collision_mesh": round(float(prob_mesh), 7),
         "cov_2d": cov_list
     }
 

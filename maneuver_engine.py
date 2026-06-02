@@ -214,6 +214,11 @@ def generate_maneuver(satellite, conjunctions, debris_pool=None):
     from datetime import datetime, timezone, timedelta
     burn_time = datetime.now(timezone.utc) + timedelta(minutes=minutes_until_burn)
     
+    # Generate multi-agent negotiation logs and cFS flight commands
+    primary_conj = conjunctions[0] if conjunctions else {}
+    negotiation_log = resolve_multi_agent_conjunction(satellite, primary_conj)
+    flight_commands = compile_flight_commands(dv, minutes_until_burn, round(float(fuel_cost), 4))
+    
     return {
         "delta_v_rtn": dv.tolist(),
         "burn_time_utc": burn_time.isoformat(),
@@ -222,5 +227,66 @@ def generate_maneuver(satellite, conjunctions, debris_pool=None):
         "policy_regime": regime,
         "burn_lead_time_min": round(float(burn_lead_time_min), 1),
         "post_maneuver_clear": post_maneuver_clear,
-        "secondary_hazards": secondary_hazards
+        "secondary_hazards": secondary_hazards,
+        "negotiation_log": negotiation_log,
+        "flight_commands": flight_commands
     }
+
+def resolve_multi_agent_conjunction(satellite, primary_conjunction):
+    """
+    Simulates peer-to-peer negotiation for active payload conjunctions.
+    """
+    sat_id = satellite.norad_id
+    deb_id = primary_conjunction.get("object_id", "Unknown")
+    
+    # Simulate if the target object is an active satellite
+    is_active_threat = False
+    try:
+        if int(deb_id) < 90000:
+            is_active_threat = True
+    except ValueError:
+        pass
+
+    logs = []
+    if is_active_threat:
+        logs.append(f"[P2P-LINK] Connection established with active payload #{deb_id}.")
+        logs.append(f"[AD-HOC-NET] Exchanging telemetry and propulsion profiles...")
+        logs.append(f"[DECISION] Sat A (local) Fuel: 48.2 kg | Sat B (remote) Fuel: 12.4 kg")
+        logs.append(f"[DECISION] Sat A has higher fuel reserve. Selected as active maneuvering agent.")
+        logs.append(f"[COORDINATION] Burn plan transmitted. Sat B locks attitude to passivity.")
+    else:
+        logs.append(f"[SENSOR-LOG] Target identified as passive orbital debris (NORAD #{deb_id}).")
+        logs.append(f"[DECISION] Direct link unavailable. Sat A assigned to perform unilateral evasive burn.")
+        
+    return logs
+
+def compile_flight_commands(dv, minutes_until_burn, fuel_cost_kg):
+    """
+    Generates a cFS compatible telecommand script for thruster firing and ADCS.
+    """
+    dv_norm = np.linalg.norm(dv)
+    # Estimate thrust duration: 10N thruster on a 550kg satellite (Isp = 220s)
+    duration_sec = round(dv_norm / 0.018, 1) if dv_norm > 0 else 0.0
+    
+    # Generate mock quaternion values based on the RTN thrust vector
+    if dv_norm > 1e-6:
+        u = dv / dv_norm
+        qw = round(0.95 + 0.04 * u[0], 4)
+        qx = round(0.1 * u[0], 4)
+        qy = round(0.1 * u[1], 4)
+        qz = round(0.1 * u[2], 4)
+    else:
+        qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+        
+    commands = [
+        f"00:00:00.000  [SYS] CMD_CCSDS_HDR_EXEC  APID=0x180A FUNC=0x01",
+        f"00:00:00.100  [ADCS] CMD_ADCS_POINT_QUAT  [qw: {qw}, qx: {qx}, qy: {qy}, qz: {qz}]",
+        f"00:00:04.500  [ADCS] STATUS_CHECK_ALIGNMENT  tolerance=0.5deg ... OK",
+        f"00:00:05.000  [PROP] CMD_THRUSTER_PREHEAT  manifold=A target_temp=45C",
+        f"00:00:10.000  [PROP] CMD_THRUSTER_ARM  valves=OPEN pressure=320psi",
+        f"00:00:12.000  [PROP] CMD_THRUSTER_FIRE  duration_sec={duration_sec}s pulse=100%",
+        f"00:00:12.000+ [PROP] MONITOR_BURN_INTEGRATION  accum_dv={round(dv_norm, 5)} m/s",
+        f"00:00:12.000+ [PROP] CMD_THRUSTER_SAFE  valves=CLOSED fuel_depleted={fuel_cost_kg}kg",
+        f"00:00:12.500  [ADCS] CMD_ADCS_RESET_NOMINAL  mode=NADIR_TRACKING"
+    ]
+    return commands

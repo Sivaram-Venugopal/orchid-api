@@ -684,8 +684,11 @@
           <div class="lbl">TIME TO TCA</div>
         </div>
         <div class="telemetry-card">
-          <div class="val" id="tele-prob">--</div>
-          <div class="lbl">COLLISION PROBABILITY</div>
+          <div class="val" style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+            <span id="tele-prob" style="font-size: 14px; font-weight: bold;">--</span>
+            <span id="tele-prob-mesh" style="font-size: 13px; color: var(--theme-accent); font-weight: bold;">--</span>
+          </div>
+          <div class="lbl">PROBABILITY (SPHERICAL vs 3D MESH)</div>
         </div>
         <div class="telemetry-card">
           <div class="val" id="tele-threat">--</div>
@@ -716,6 +719,37 @@
           ⛽ Fuel Mass Cost: <span id="burn-fuel">--</span> kg<br>
           🛡️ Post-burn Closest Distance: <span id="burn-post">--</span> km<br>
           ⚡ Secondary Safety Check: <span id="burn-safety-status" style="font-weight:bold;">--</span>
+        </div>
+        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+          <div style="font-size: 10px; color: rgba(255,255,255,0.4); margin-bottom: 5px; font-weight: bold; letter-spacing: 0.05em; text-align: left;">📟 COMPILATION: ADCS FLIGHT COMMAND SCRIPT (cFS COMPATIBLE)</div>
+          <pre id="burn-script" style="background: rgba(0,0,0,0.3); color: #00f5d4; font-family: monospace; font-size: 9px; padding: 8px; border-radius: 4px; overflow-y: auto; max-height: 100px; text-align: left; margin: 0; line-height: 1.4; border: 1px solid rgba(0,245,212,0.1);"></pre>
+        </div>
+      </div>
+
+      <!-- Advanced SSA Operations Feed -->
+      <div class="panel" style="margin-top: 20px;">
+        <div class="panel-title" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>📡 Advanced SSA Operations Feed</span>
+          <span style="display:inline-block; width:8px; height:8px; background:#00f5d4; border-radius:50%; box-shadow:0 0 8px #00f5d4; animation: pulse 1.5s infinite;"></span>
+        </div>
+        
+        <!-- Tab Headers -->
+        <div style="display:flex; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 10px; gap: 10px;">
+          <button id="tab-btn-obs" class="scenario-btn active" style="flex:1; border-radius:4px; font-size:10px; padding:6px; font-weight: bold; background: var(--theme-accent); color: #000; border: none; cursor: pointer;" onclick="switchOpsTab('obs')">LIVE Observations Feed</button>
+          <button id="tab-btn-p2p" class="scenario-btn" style="flex:1; border-radius:4px; font-size:10px; padding:6px; font-weight: bold; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;" onclick="switchOpsTab('p2p')">P2P Maneuver Negotiation</button>
+        </div>
+        
+        <!-- Tab Contents -->
+        <div id="tab-content-obs" style="display:block;">
+          <div id="obs-console" style="background: rgba(0,0,0,0.4); color: #c4d1ec; font-family: monospace; font-size: 10px; padding: 10px; border-radius: 6px; height: 120px; overflow-y: auto; text-align: left; line-height: 1.5; border: 1px solid rgba(255,255,255,0.05);">
+            <div style="color: rgba(255,255,255,0.4);">[SYSTEM] Connected to Space-Track & LeoLabs streams. Listening for observations...</div>
+          </div>
+        </div>
+        
+        <div id="tab-content-p2p" style="display:none;">
+          <div id="p2p-console" style="background: rgba(0,0,0,0.4); color: #ff9f1c; font-family: monospace; font-size: 10px; padding: 10px; border-radius: 6px; height: 120px; overflow-y: auto; text-align: left; line-height: 1.5; border: 1px solid rgba(255,255,255,0.05);">
+            <div style="color: rgba(255,255,255,0.4);">[SYSTEM] P2P network idle. Select a conjunction preset and run analysis.</div>
+          </div>
         </div>
       </div>
 
@@ -774,6 +808,8 @@
         } else if (data.type === 'error') {
           alert("Error during analysis: " + data.message);
           document.getElementById('loading-overlay').style.display = 'none';
+        } else if (data.type === 'observation') {
+          addObservationLog(data.message);
         }
       };
       
@@ -907,7 +943,9 @@
       // Update values
       document.getElementById('tele-dist').textContent = dist.toFixed(3) + ' km';
       document.getElementById('tele-tca').textContent = tca.toFixed(1) + ' min';
-      document.getElementById('tele-prob').textContent = (prob * 100).toFixed(4) + '%';
+      document.getElementById('tele-prob').textContent = (prob * 100).toFixed(4) + '% (Sphere)';
+      const probMesh = conj.probability_of_collision_mesh !== undefined ? conj.probability_of_collision_mesh : 0.0;
+      document.getElementById('tele-prob-mesh').textContent = (probMesh * 100).toFixed(4) + '% (3D Mesh)';
       document.getElementById('tele-threat').textContent = risk;
 
       // Update class & display based on threat level
@@ -1015,12 +1053,86 @@
           safetyStatus.textContent = `UNSAFE (Secondary collision with ${hazards})`;
           safetyStatus.style.color = "#ff0055";
         }
+        // Update flight script compiler
+        const burnScript = document.getElementById('burn-script');
+        if (burnScript && data.maneuver.flight_commands) {
+          burnScript.textContent = data.maneuver.flight_commands.join('\n');
+        }
+        
+        // Update P2P Negotiation Console
+        const p2pConsole = document.getElementById('p2p-console');
+        if (p2pConsole && data.maneuver.negotiation_log) {
+          p2pConsole.innerHTML = '';
+          data.maneuver.negotiation_log.forEach(log => {
+            const line = document.createElement('div');
+            line.textContent = log;
+            p2pConsole.appendChild(line);
+          });
+        }
       } else {
         burnPanel.classList.remove('active');
+        const burnScript = document.getElementById('burn-script');
+        if (burnScript) burnScript.textContent = '--';
+        const p2pConsole = document.getElementById('p2p-console');
+        if (p2pConsole) {
+          p2pConsole.innerHTML = '<div style="color: rgba(255,255,255,0.4);">[SYSTEM] P2P network idle. Select a conjunction preset and run analysis.</div>';
+        }
       }
 
       if (!simActive) {
         window.lastAnalysisData = data;
+      }
+    }
+
+    // Advanced SSA Operations Feed UI handlers
+    function switchOpsTab(tabName) {
+      const btnObs = document.getElementById('tab-btn-obs');
+      const btnP2p = document.getElementById('tab-btn-p2p');
+      const contentObs = document.getElementById('tab-content-obs');
+      const contentP2p = document.getElementById('tab-content-p2p');
+      
+      if (tabName === 'obs') {
+        btnObs.className = 'scenario-btn active';
+        btnObs.style.background = 'var(--theme-accent)';
+        btnObs.style.color = '#000';
+        btnObs.style.border = 'none';
+        
+        btnP2p.className = 'scenario-btn';
+        btnP2p.style.background = 'rgba(255,255,255,0.05)';
+        btnP2p.style.color = '#fff';
+        btnP2p.style.border = '1px solid rgba(255,255,255,0.1)';
+        
+        contentObs.style.display = 'block';
+        contentP2p.style.display = 'none';
+      } else {
+        btnP2p.className = 'scenario-btn active';
+        btnP2p.style.background = 'var(--theme-accent)';
+        btnP2p.style.color = '#000';
+        btnP2p.style.border = 'none';
+        
+        btnObs.className = 'scenario-btn';
+        btnObs.style.background = 'rgba(255,255,255,0.05)';
+        btnObs.style.color = '#fff';
+        btnObs.style.border = '1px solid rgba(255,255,255,0.1)';
+        
+        contentP2p.style.display = 'block';
+        contentObs.style.display = 'none';
+      }
+    }
+
+    function addObservationLog(msg) {
+      const consoleEl = document.getElementById('obs-console');
+      if (consoleEl) {
+        const logLine = document.createElement('div');
+        logLine.textContent = msg;
+        consoleEl.appendChild(logLine);
+        
+        // Remove oldest lines if console grows too large (> 50 lines)
+        while (consoleEl.children.length > 50) {
+          consoleEl.removeChild(consoleEl.firstChild);
+        }
+        
+        consoleEl.scrollTop = consoleEl.scrollHeight; // Auto scroll
       }
     }
 

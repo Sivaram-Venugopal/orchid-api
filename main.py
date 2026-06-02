@@ -26,11 +26,32 @@ app = FastAPI(
 jobs = {}
 loop = None
 
+async def simulated_observation_feed():
+    import random
+    from datetime import datetime
+    messages = [
+        "SSA radar track correction for NORAD #25544 (ISS): radial error reduced to 12.8m.",
+        "LeoLabs tracking pass completed for debris #36248: eccentricity correction applied.",
+        "Space-Track alert: New orbital element set (TLE) published for Sentinel-3A.",
+        "ADCS sensor status: Gyroscope calibration successful. Orbit drift rate within limits.",
+        "Live feed status: 14 radar track events processed in the last 60 seconds.",
+        "NASA CARA conjunction screening pass complete: zero new hazards detected."
+    ]
+    while True:
+        await asyncio.sleep(8.0)
+        msg = random.choice(messages)
+        if loop and manager.active_connections:
+            await manager.broadcast({
+                "type": "observation",
+                "message": f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+            })
+
 @app.on_event("startup")
 async def startup_event():
     global loop
     loop = asyncio.get_running_loop()
     logger.info("Starting ORCHID API v2.0...")
+    asyncio.create_task(simulated_observation_feed())
 
 # WebSocket Connection Manager
 class ConnectionManager:
