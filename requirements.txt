@@ -10,3 +10,4 @@ stable_baselines3==2.3.2
 gymnasium==0.29.1
 cloudpickle==3.1.2
 aiofiles==23.2.1
+apscheduler==3.10.4

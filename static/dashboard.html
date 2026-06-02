@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORCHID Live Space Traffic Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #070913;
+            --card-bg: rgba(15, 22, 42, 0.45);
+            --border-glow: rgba(56, 189, 248, 0.15);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-purple: #a855f7;
+            
+            --color-critical: #ef4444;
+            --color-high: #f97316;
+            --color-medium: #eab308;
+            --color-low: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(168, 85, 247, 0.1) 0, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(56, 189, 248, 0.1) 0, transparent 50%);
+        }
+
+        h1, h2, h3, .brand-title {
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .container {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: flex-start;
+            align-items: center;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 1rem;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+        }
+
+        .brand-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: linear-gradient(to right, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        @media (min-width: 1024px) {
+            .dashboard-grid {
+                grid-template-columns: 450px 1fr;
+            }
+        }
+
+        /* Glassmorphism Card Base */
+        .glass-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-glow);
+            border-radius: 16px;
+            backdrop-filter: blur(12px);
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .glass-card:hover {
+            box-shadow: 0 12px 40px 0 rgba(56, 189, 248, 0.08);
+        }
+
+        /* Stats Section */
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 768px) and (max-width: 1023px) {
+            .stats-container {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        .stat-card {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 110px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'Outfit', sans-serif;
+            margin-bottom: 0.25rem;
+            background: linear-gradient(135deg, #ffffff, #cbd5e1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-card.critical .stat-value {
+            color: var(--color-critical);
+            -webkit-text-fill-color: var(--color-critical);
+            text-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+
+        .stat-card.warning .stat-value {
+            color: var(--color-high);
+            -webkit-text-fill-color: var(--color-high);
+            text-shadow: 0 0 15px rgba(249, 115, 22, 0.4);
+        }
+
+        /* Radar panel */
+        .radar-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .radar-title {
+            align-self: flex-start;
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .live-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-low);
+            display: inline-block;
+            box-shadow: 0 0 10px var(--color-low);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
+        }
+
+        .radar-canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            border: 1px solid rgba(56, 189, 248, 0.1);
+            background: radial-gradient(circle, rgba(15, 22, 42, 0.6) 0%, rgba(7, 9, 19, 0.9) 100%);
+            box-shadow: inset 0 0 30px rgba(56, 189, 248, 0.05);
+        }
+
+        #radarCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* Table Card and Conjunction List */
+        .table-panel {
+            display: flex;
+            flex-direction: column;
+            min-height: 500px;
+        }
+
+        .table-header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .table-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .table-scroller {
+            flex-grow: 1;
+            overflow-x: auto;
+            overflow-y: auto;
+            max-height: 600px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.875rem;
+        }
+
+        th {
+            background-color: rgba(15, 23, 42, 0.8);
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: 0.75rem 1rem;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .object-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .object-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .object-id {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .conjunction-relation {
+            color: var(--accent-blue);
+            font-size: 0.75rem;
+            margin: 0.15rem 0;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .badge-critical {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: var(--color-critical);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+        }
+
+        .badge-high {
+            background-color: rgba(249, 115, 22, 0.15);
+            color: var(--color-high);
+            border: 1px solid rgba(249, 115, 22, 0.25);
+        }
+
+        .badge-medium {
+            background-color: rgba(234, 179, 8, 0.15);
+            color: var(--color-medium);
+            border: 1px solid rgba(234, 179, 8, 0.25);
+        }
+
+        .badge-low {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--color-low);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .action-link {
+            display: inline-block;
+            padding: 0.35rem 0.75rem;
+            background: linear-gradient(135deg, var(--accent-blue), rgba(56,189,248,0.2));
+            border-radius: 6px;
+            color: #ffffff;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.75rem;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            transition: all 0.2s ease;
+        }
+
+        .action-link:hover {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-secondary);
+        }
+
+        .update-time-container {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo-container">
+                <span class="logo-icon">🛰️</span>
+                <span class="brand-title">ORCHID Traffic Control</span>
+            </div>
+        </header>
+
+        <!-- Stats Panel -->
+        <div class="stats-container">
+            <div class="glass-card stat-card">
+                <div class="stat-value" id="statMonitored">0</div>
+                <div class="stat-label">Conjunction Pairs</div>
+            </div>
+            <div class="glass-card stat-card critical">
+                <div class="stat-value" id="statCritical">0</div>
+                <div class="stat-label">Critical Risks</div>
+            </div>
+            <div class="glass-card stat-card warning">
+                <div class="stat-value" id="statHigh">0</div>
+                <div class="stat-label">High Risks</div>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-value" id="statUpdated" style="font-size: 0.9rem; font-weight: 500;">Never</div>
+                <div class="stat-label">Last Updated</div>
+            </div>
+        </div>
+
+        <!-- Main Grid Layout -->
+        <div class="dashboard-grid">
+            <!-- Left Column: Radar Control -->
+            <div class="glass-card radar-panel">
+                <h2 class="radar-title">
+                    <span class="live-indicator"></span> Conjunction Radar (b-Plane)
+                </h2>
+                <div class="radar-canvas-container">
+                    <canvas id="radarCanvas"></canvas>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem; font-size: 0.75rem; color: var(--text-secondary);">
+                    <div>🟢 Primary</div>
+                    <div>🔴 Debris</div>
+                    <div>⚡ Range: 10 km</div>
+                </div>
+            </div>
+
+            <!-- Right Column: Detail List -->
+            <div class="glass-card table-panel">
+                <div class="table-header-container">
+                    <h2 class="table-title">SOCRATES Live Collision Assessment</h2>
+                    <div class="update-time-container" id="statusMessage">Connecting telemetry feed...</div>
+                </div>
+                <div class="table-scroller">
+                    <table id="conjunctionsTable">
+                        <thead>
+                            <tr>
+                                <th>Satellites (Primary / Secondary)</th>
+                                <th>Min Range (km)</th>
+                                <th>TCA Window</th>
+                                <th>Risk Level</th>
+                                <th>Collision Prob</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                            <tr>
+                                <td colspan="6">
+                                    <div class="empty-state">No real conjunction threat data loaded. Waiting for feed...</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('radarCanvas');
+        const ctx = canvas.getContext('2d');
+        let conjunctions = [];
+        let radarAngle = 0;
+
+        // Make canvas responsive
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.width;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Standard Colors
+        const colors = {
+            critical: '#ef4444',
+            high: '#f97316',
+            medium: '#eab308',
+            low: '#10b981',
+            text: '#94a3b8',
+            accent: '#38bdf8'
+        };
+
+        // Draw Conjunction Radar
+        function drawRadar() {
+            const width = canvas.width;
+            const height = canvas.height;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const maxRadius = Math.min(centerX, centerY) - 20;
+
+            // Clear screen
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw circular grid concentric rings
+            const rings = [0.25, 0.5, 0.75, 1.0];
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+            ctx.lineWidth = 1;
+            
+            rings.forEach(fraction => {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, maxRadius * fraction, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Add distance label
+                ctx.fillStyle = 'rgba(148, 163, 184, 0.3)';
+                ctx.font = '9px Inter';
+                ctx.fillText(`${(fraction * 10).toFixed(1)} km`, centerX + 5, centerY - (maxRadius * fraction) + 12);
+            });
+
+            // Draw Crosshairs
+            ctx.beginPath();
+            ctx.moveTo(centerX - maxRadius, centerY);
+            ctx.lineTo(centerX + maxRadius, centerY);
+            ctx.moveTo(centerX, centerY - maxRadius);
+            ctx.lineTo(centerX, centerY + maxRadius);
+            ctx.stroke();
+
+            // Draw sweep line (radar sweep animation)
+            radarAngle += 0.01;
+            if (radarAngle >= Math.PI * 2) radarAngle = 0;
+            
+            const sweepGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, maxRadius);
+            sweepGradient.addColorStop(0, 'rgba(56, 189, 248, 0.15)');
+            sweepGradient.addColorStop(1, 'rgba(56, 189, 248, 0)');
+            
+            ctx.fillStyle = sweepGradient;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.arc(centerX, centerY, maxRadius, radarAngle - 0.25, radarAngle);
+            ctx.lineTo(centerX, centerY);
+            ctx.fill();
+
+            // Plot Primary Satellite in Center
+            ctx.fillStyle = colors.low;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = colors.low;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // Reset shadow
+
+            // Plot Conjunction Debris Objects
+            conjunctions.forEach(c => {
+                const assess = c.risk_assessment;
+                const dist = assess.distance_km;
+                const risk = assess.risk_level.toLowerCase();
+                
+                // Assign a semi-random angle based on debris NORAD ID so they distribute across 2D plane
+                const noradId = parseInt(c.secondary.norad_id) || 12345;
+                const theta = (noradId % 360) * Math.PI / 180;
+                
+                // Map distance: scale max 10 km to maxRadius pixels
+                const distanceScale = Math.min(1.0, dist / 10.0);
+                const r = maxRadius * distanceScale;
+                
+                const debrisX = centerX + r * Math.cos(theta);
+                const debrisY = centerY + r * Math.sin(theta);
+                
+                const riskColor = colors[risk] || colors.low;
+
+                // Draw line of conjunction
+                ctx.strokeStyle = `${riskColor}33`; // Add alpha transparency
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(debrisX, debrisY);
+                ctx.stroke();
+
+                // Draw debris dot
+                ctx.fillStyle = riskColor;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = riskColor;
+                ctx.beginPath();
+                ctx.arc(debrisX, debrisY, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset
+
+                // Add name/id text label
+                ctx.fillStyle = colors.text;
+                ctx.font = '9px Inter';
+                ctx.fillText(c.secondary.norad_id, debrisX + 8, debrisY + 3);
+            });
+
+            requestAnimationFrame(drawRadar);
+        }
+
+        // Connect WebSockets
+        let ws;
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            ws = new WebSocket(`${protocol}//${host}/ws/telemetry`);
+
+            ws.onopen = () => {
+                console.log("WebSocket connected.");
+                document.getElementById('statusMessage').innerText = "Live Telemetry Feed Active";
+                fetchData(); // Fetch initial data immediately
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'live_dashboard_update') {
+                        console.log("Received WebSocket live update.");
+                        updateUI(message.data);
+                    }
+                } catch (e) {
+                    console.error("Error parsing WebSocket message:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket closed. Reconnecting or falling back to HTTP...");
+                document.getElementById('statusMessage').innerText = "Telemetry closed. Fallback active.";
+                setTimeout(connectWebSocket, 5000); // Retry reconnect
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+        }
+
+        // Fallback HTTP Fetching
+        async function fetchData() {
+            try {
+                const response = await fetch('/live-conjunctions');
+                if (response.ok) {
+                    const data = await response.json();
+                    updateUI(data);
+                }
+            } catch (err) {
+                console.error("Error fetching live conjunctions:", err);
+            }
+        }
+
+        // Polling loop (fallback if websocket is closed)
+        setInterval(() => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                fetchData();
+            }
+        }, 15000); // 15 seconds polling fallback
+
+        // Update Dashboard UI
+        function updateUI(data) {
+            conjunctions = data.conjunctions || [];
+            
+            // Set statistics counts
+            document.getElementById('statMonitored').innerText = conjunctions.length;
+            
+            const criticalCount = conjunctions.filter(c => c.risk_assessment.risk_level === 'CRITICAL').length;
+            const highCount = conjunctions.filter(c => c.risk_assessment.risk_level === 'HIGH').length;
+            
+            document.getElementById('statCritical').innerText = criticalCount;
+            document.getElementById('statHigh').innerText = highCount;
+            
+            // Format Timestamp
+            const updatedDate = new Date(data.timestamp);
+            document.getElementById('statUpdated').innerText = updatedDate.toLocaleTimeString();
+
+            // Populate Table
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            if (conjunctions.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6">
+                            <div class="empty-state">No conjunctions detected within parameters. Current space corridor is clean.</div>
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            conjunctions.forEach(c => {
+                const p = c.primary;
+                const s = c.secondary;
+                const assess = c.risk_assessment;
+                
+                const tr = document.createElement('tr');
+                
+                // Badges class matching
+                let badgeClass = 'badge-low';
+                if (assess.risk_level === 'CRITICAL') badgeClass = 'badge-critical';
+                else if (assess.risk_level === 'HIGH') badgeClass = 'badge-high';
+                else if (assess.risk_level === 'MEDIUM') badgeClass = 'badge-medium';
+
+                // Format Time to closest approach
+                const tcaMin = assess.time_to_closest_approach_min;
+                let tcaStr = `${tcaMin.toFixed(0)} mins`;
+                if (tcaMin > 60) {
+                    const hrs = Math.floor(tcaMin / 60);
+                    const mins = Math.round(tcaMin % 60);
+                    tcaStr = `${hrs}h ${mins}m`;
+                }
+
+                // Probability formatting (scientific notation)
+                const p_collision = assess.probability_of_collision;
+                const pStr = p_collision < 1e-5 ? p_collision.toExponential(3) : p_collision.toFixed(5);
+
+                tr.innerHTML = `
+                    <td>
+                        <div class="object-cell">
+                            <span class="object-name">${p.name} <span style="font-weight:400; color:var(--text-secondary)">(${p.norad_id})</span></span>
+                            <span class="conjunction-relation">⚡ Conjoins with</span>
+                            <span class="object-name" style="color:#cbd5e1">${s.name} <span style="font-weight:400; color:var(--text-secondary)">(${s.norad_id})</span></span>
+                        </div>
+                    </td>
+                    <td>
+                        <div style="font-weight: 500">${assess.distance_km.toFixed(4)} km</div>
+                    </td>
+                    <td>
+                        <div>${tcaStr}</div>
+                    </td>
+                    <td>
+                        <span class="badge ${badgeClass}">${assess.risk_level}</span>
+                    </td>
+                    <td>
+                        <div style="font-family: monospace">${pStr}</div>
+                    </td>
+                    <td>
+                        <a href="/ui" class="action-link" target="_blank">Assess Avoidance</a>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Initialize App
+        connectWebSocket();
+        drawRadar();
+    </script>
+</body>
+</html>

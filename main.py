@@ -158,6 +158,21 @@ async def simulated_observation_feed():
                 "message": f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
             })
 
+async def live_dashboard_feed():
+    from live_feed import get_cached_conjunctions
+    import asyncio
+    while True:
+        await asyncio.sleep(30.0)
+        if manager.active_connections:
+            try:
+                data = get_cached_conjunctions()
+                await manager.broadcast({
+                    "type": "live_dashboard_update",
+                    "data": data
+                })
+            except Exception as e:
+                logger.error(f"Error broadcasting live dashboard update: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     global loop
@@ -165,6 +180,17 @@ async def startup_event():
     logger.info("Starting ORCHID API v2.0...")
     init_db()
     asyncio.create_task(simulated_observation_feed())
+    asyncio.create_task(live_dashboard_feed())
+    
+    # Start APScheduler background jobs
+    from scheduler import start_scheduler
+    start_scheduler()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    logger.info("Shutting down ORCHID API v2.0...")
+    from scheduler import shutdown_scheduler
+    shutdown_scheduler()
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -606,6 +632,40 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/live-conjunctions")
+def live_conjunctions():
+    from live_feed import get_cached_conjunctions
+    return get_cached_conjunctions()
+
+@app.get("/live-tles")
+def live_tles():
+    from live_feed import get_cached_conjunctions
+    data = get_cached_conjunctions()
+    catalog = {}
+    for c in data.get("conjunctions", []):
+        p = c["primary"]
+        s = c["secondary"]
+        catalog[p["norad_id"]] = {
+            "name": p["name"],
+            "line1": p["line1"],
+            "line2": p["line2"],
+            "type": "active"
+        }
+        catalog[s["norad_id"]] = {
+            "name": s["name"],
+            "line1": s["line1"],
+            "line2": s["line2"],
+            "type": "debris"
+        }
+    return catalog
+
+@app.get("/dashboard")
+def dashboard():
+    dash = os.path.join(STATIC_DIR, "dashboard.html")
+    if os.path.exists(dash):
+        return FileResponse(dash)
+    return {"error": "Dashboard UI not found", "static_dir": STATIC_DIR}
 
 @app.get("/ui")
 def ui():
