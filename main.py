@@ -3,9 +3,12 @@ import uuid
 import numpy as np
 import logging
 import asyncio
+import sqlite3
+import struct
+import io
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from risk_engine import assess_risk
@@ -25,6 +28,52 @@ app = FastAPI(
 # Global store for background jobs and loop reference
 jobs = {}
 loop = None
+
+DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conjunction_history.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conjunction_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            satellite_id TEXT,
+            overall_risk TEXT,
+            closest_distance_km REAL,
+            tca_min REAL,
+            collision_prob REAL,
+            maneuver_required INTEGER,
+            fuel_spent_kg REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def log_to_db(satellite_id, overall_risk, conjunctions, maneuver_required, fuel_spent_kg):
+    try:
+        from datetime import datetime, timezone
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        closest = conjunctions[0] if conjunctions else {}
+        cursor.execute("""
+            INSERT INTO conjunction_history (
+                timestamp, satellite_id, overall_risk, closest_distance_km, tca_min, collision_prob, maneuver_required, fuel_spent_kg
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            satellite_id,
+            overall_risk,
+            closest.get("distance_km", 0.0),
+            closest.get("time_to_closest_approach_min", 0.0),
+            closest.get("probability_of_collision", 0.0),
+            1 if maneuver_required else 0,
+            fuel_spent_kg
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to log conjunction to SQLite database: {e}")
 
 async def simulated_observation_feed():
     import random
@@ -51,6 +100,7 @@ async def startup_event():
     global loop
     loop = asyncio.get_running_loop()
     logger.info("Starting ORCHID API v2.0...")
+    init_db()
     asyncio.create_task(simulated_observation_feed())
 
 # WebSocket Connection Manager
@@ -199,6 +249,10 @@ def run_analysis_background(task_id: str, request: ManeuverRequest):
         jobs[task_id]["progress"] = 100
         jobs[task_id]["result"] = result
         
+        # Log to SQLite
+        fuel_cost = result["maneuver"]["fuel_cost_kg"] if result["maneuver_required"] and result["maneuver"] else 0.0
+        log_to_db(result["satellite_id"], result["overall_risk"], result["conjunctions"], result["maneuver_required"], fuel_cost)
+        
         # Broadcast finished task result
         if loop:
             asyncio.run_coroutine_threadsafe(
@@ -264,6 +318,10 @@ def analyze(request: ManeuverRequest):
         elif "WARNING" in levels:
             overall = "WARNING"
             
+        # Log to SQLite
+        fuel_cost = maneuver["fuel_cost_kg"] if maneuver_required and maneuver else 0.0
+        log_to_db(satellite.norad_id, overall, conjunctions, maneuver_required, fuel_cost)
+        
         logger.info(f"Analysis complete: {overall} risk")
         return OrchidResponse(
             satellite_id=satellite.norad_id,
@@ -324,6 +382,73 @@ def risk_only(request: ManeuverRequest):
     except Exception as e:
         logger.error(f"Risk-only error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/history")
+def get_history():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, timestamp, satellite_id, overall_risk, closest_distance_km, tca_min, collision_prob, maneuver_required, fuel_spent_kg
+            FROM conjunction_history
+            ORDER BY id DESC
+            LIMIT 50
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        history_list = []
+        for row in rows:
+            history_list.append({
+                "id": row[0],
+                "timestamp": row[1],
+                "satellite_id": row[2],
+                "overall_risk": row[3],
+                "closest_distance_km": row[4],
+                "tca_min": row[5],
+                "collision_prob": row[6],
+                "maneuver_required": bool(row[7]),
+                "fuel_spent_kg": row[8]
+            })
+        return history_list
+    except Exception as e:
+        logger.error(f"Failed to fetch conjunction history from SQLite: {e}")
+        raise HTTPException(status_code=500, detail="Internal database error")
+
+@app.get("/compile-binary")
+def compile_binary(dvr: float = 0.0, dvt: float = 0.0, dvn: float = 0.0, duration: float = 0.0):
+    try:
+        # Calculate CCSDS 8-bit checksum: sum of all bytes modulo 256
+        # CCSDS Packet Primary Header: 6 bytes
+        # Byte 0-1: 0x180A (Version=0, Type=1, SecHeader=0, APID=0x00A)
+        # Byte 2-3: 0xC000 (SeqFlags=3, SeqCount=0)
+        # Byte 4-5: 0x0011 (Length = payload size - 1 = 17 bytes)
+        apid_packet = 0x180A
+        seq_packet = 0xC000
+        length_val = 17
+        
+        header = struct.pack(">HHH", apid_packet, seq_packet, length_val)
+        
+        # Calculate checksum of the payload bytes (function code + floats)
+        payload_core = struct.pack(">Bffff", 1, dvr, dvt, dvn, duration)
+        
+        # Checksum is the sum of header and payload bytes
+        total_bytes = header + payload_core
+        checksum = sum(total_bytes) % 256
+        
+        payload = payload_core + struct.pack("B", checksum)
+        full_packet = header + payload
+        
+        # Return as downloadable binary file stream
+        stream = io.BytesIO(full_packet)
+        return StreamingResponse(
+            stream, 
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=orchid_ccsds_maneuver.bin"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to compile CCSDS binary: {e}")
+        raise HTTPException(status_code=500, detail="Compilation failed")
 
 # WebSocket Endpoint
 @app.websocket("/ws/telemetry")

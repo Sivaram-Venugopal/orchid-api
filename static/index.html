@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <style>
     :root {
       --bg-dark: #050512;
@@ -524,6 +526,36 @@
       font-size: 13px;
       color: var(--text-muted);
     }
+    
+    /* Conjunction history database logs styling */
+    .risk-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .risk-badge.critical {
+      background: rgba(255, 0, 85, 0.15);
+      border: 1px solid rgba(255, 0, 85, 0.4);
+      color: #ff3366;
+    }
+    .risk-badge.high {
+      background: rgba(255, 159, 28, 0.15);
+      border: 1px solid rgba(255, 159, 28, 0.4);
+      color: var(--accent-warn);
+    }
+    .risk-badge.nominal {
+      background: rgba(0, 245, 212, 0.15);
+      border: 1px solid rgba(0, 245, 212, 0.4);
+      color: var(--accent-secondary);
+    }
+    th {
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
   </style>
 </head>
 <body>
@@ -652,21 +684,32 @@
       </div>
 
       <!-- Radar Display -->
-      <div class="radar-visualizer">
-        <div class="radar">
-          <div class="radar-sweep"></div>
-          <div class="radar-circle c1"></div>
-          <div class="radar-circle c2"></div>
-          <div class="radar-circle c3"></div>
-          <div class="radar-target"></div>
-          
-          <!-- Covariance Ellipse SVG Overlay -->
-          <svg id="radar-svg" style="position: absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:4;">
-            <ellipse id="cov-ellipse" cx="140" cy="140" rx="0" ry="0" transform="rotate(0 140 140)" style="fill:rgba(255, 0, 85, 0.08); stroke:rgba(255, 0, 85, 0.5); stroke-width:1.5; stroke-dasharray:3,3; display:none;" />
-          </svg>
-          
-          <!-- Debris will be plotted here -->
-          <div id="radar-debris-point"></div>
+      <div class="radar-visualizer" style="position: relative; overflow: hidden; border-radius: 8px;">
+        <!-- Toggle button -->
+        <button id="view-toggle-btn" style="position: absolute; top: 10px; right: 10px; z-index: 10; background: rgba(16, 17, 36, 0.85); color: var(--accent-secondary); border: 1px solid var(--panel-border); border-radius: 4px; padding: 4px 8px; font-size: 10px; font-weight: bold; cursor: pointer; transition: 0.2s;" onclick="toggle3DView()">3D GLOBE VIEW</button>
+        
+        <!-- 2D Radar View -->
+        <div id="radar-2d" style="display: block; width: 100%; height: 100%;">
+          <div class="radar">
+            <div class="radar-sweep"></div>
+            <div class="radar-circle c1"></div>
+            <div class="radar-circle c2"></div>
+            <div class="radar-circle c3"></div>
+            <div class="radar-target"></div>
+            
+            <!-- Covariance Ellipse SVG Overlay -->
+            <svg id="radar-svg" style="position: absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:4;">
+              <ellipse id="cov-ellipse" cx="140" cy="140" rx="0" ry="0" transform="rotate(0 140 140)" style="fill:rgba(255, 0, 85, 0.08); stroke:rgba(255, 0, 85, 0.5); stroke-width:1.5; stroke-dasharray:3,3; display:none;" />
+            </svg>
+            
+            <!-- Debris will be plotted here -->
+            <div id="radar-debris-point"></div>
+          </div>
+        </div>
+
+        <!-- 3D Earth Globe View (Three.js Container) -->
+        <div id="radar-3d" style="display: none; width: 100%; height: 280px; position: relative; background: #02020a;">
+          <div id="three-container" style="width: 100%; height: 100%;"></div>
         </div>
       </div>
 
@@ -724,6 +767,9 @@
           <div style="font-size: 10px; color: rgba(255,255,255,0.4); margin-bottom: 5px; font-weight: bold; letter-spacing: 0.05em; text-align: left;">📟 COMPILATION: ADCS FLIGHT COMMAND SCRIPT (cFS COMPATIBLE)</div>
           <pre id="burn-script" style="background: rgba(0,0,0,0.3); color: #00f5d4; font-family: monospace; font-size: 9px; padding: 8px; border-radius: 4px; overflow-y: auto; max-height: 100px; text-align: left; margin: 0; line-height: 1.4; border: 1px solid rgba(0,245,212,0.1);"></pre>
         </div>
+        <button id="download-bin-btn" class="btn-action" style="margin-top: 15px; font-size: 13px; padding: 10px; height: auto;" onclick="downloadCCSDS()">
+          💾 Export CCSDS Binary Packet (.bin)
+        </button>
       </div>
 
       <!-- Advanced SSA Operations Feed -->
@@ -735,7 +781,7 @@
         
         <!-- Tab Headers -->
         <div style="display:flex; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 10px; gap: 10px;">
-          <button id="tab-btn-obs" class="scenario-btn active" style="flex:1; border-radius:4px; font-size:10px; padding:6px; font-weight: bold; background: var(--theme-accent); color: #000; border: none; cursor: pointer;" onclick="switchOpsTab('obs')">LIVE Observations Feed</button>
+          <button id="tab-btn-obs" class="scenario-btn active" style="flex:1; border-radius:4px; font-size:10px; padding:6px; font-weight: bold; background: var(--accent-secondary); color: #000; border: none; cursor: pointer;" onclick="switchOpsTab('obs')">LIVE Observations Feed</button>
           <button id="tab-btn-p2p" class="scenario-btn" style="flex:1; border-radius:4px; font-size:10px; padding:6px; font-weight: bold; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;" onclick="switchOpsTab('p2p')">P2P Maneuver Negotiation</button>
         </div>
         
@@ -753,6 +799,36 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- BOTTOM PANEL: Conjunction Database Log -->
+    <div class="panel" style="grid-column: 1 / -1; margin-top: 10px;">
+      <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>📊 SQLite Conjunction Database Logs</span>
+        <button onclick="fetchHistory()" class="scenario-btn" style="flex: none; padding: 4px 12px; font-size: 11px;">🔄 Refresh Logs</button>
+      </div>
+      <div style="overflow-x: auto; width: 100%;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+          <thead>
+            <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.1); color: var(--text-muted); font-weight: 600;">
+              <th style="padding: 10px 12px;">TIMESTAMP (UTC)</th>
+              <th style="padding: 10px 12px;">SATELLITE</th>
+              <th style="padding: 10px 12px;">OVERALL RISK</th>
+              <th style="padding: 10px 12px;">CLOSEST DISTANCE</th>
+              <th style="padding: 10px 12px;">TIME TO TCA</th>
+              <th style="padding: 10px 12px;">COLLISION PROBABILITY</th>
+              <th style="padding: 10px 12px;">MANEUVER DECISION</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr>
+              <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                Loading database history logs...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
   </div>
@@ -833,7 +909,9 @@
 
     function loadScenario(type) {
       document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
-      event.target.classList.add('active');
+      if (event && event.target) {
+        event.target.classList.add('active');
+      }
 
       const data = PRESETS[type];
       document.getElementById('sat-id').value = data.satId;
@@ -843,6 +921,11 @@
       document.getElementById('deb-id').value = data.debId;
       document.getElementById('deb-name').value = data.debName;
       document.getElementById('deb-tle').value = data.debTle;
+      
+      // Update 3D orbits if visible and initialized
+      if (is3DActive && is3DInitialized) {
+        update3DVisualizer(data.satTle, data.debTle, 1.0);
+      }
     }
 
     function updateProgress(pct) {
@@ -951,11 +1034,11 @@
       // Update class & display based on threat level
       threatAlert.className = 'alert-banner';
       if (risk === 'COLLISION_COURSE' || risk === 'WARNING') {
-        threatAlert.classList.add(risk === 'COLLISION_COURSE' ? 'critical' : 'high');
-        threatAlert.textContent = `🚨 COLLISION THREAT: Debris NORAD #${conj.object_id} incoming in ${tca.toFixed(1)}m. Fuel-saving evasive maneuver generated.`;
+        threatAlert.className = 'alert-banner ' + (risk === 'COLLISION_COURSE' ? 'critical' : 'high');
+        threatAlert.innerHTML = `🚨 <strong>${risk} STATUS:</strong> Debris NORAD #${conj.object_id} incoming in ${tca.toFixed(1)}m. Fuel-saving evasive maneuver generated.`;
       } else {
-        threatAlert.classList.add('nominal');
-        threatAlert.textContent = `🛡️ NOMINAL ORBIT STATUS. CONJUNCTION RISK WITHIN SAFETY LIMITS.`;
+        threatAlert.className = 'alert-banner nominal';
+        threatAlert.innerHTML = `🛡️ <strong>NOMINAL STATUS:</strong> Conjunction risk within safety limits. No maneuvers necessary.`;
       }
 
       // Plot Debris on Radar
@@ -1079,6 +1162,16 @@
         }
       }
 
+      // Update 3D visualization coordinates if active
+      if (is3DActive) {
+        const satTle = document.getElementById('sat-tle').value;
+        const debTle = document.getElementById('deb-tle').value;
+        update3DVisualizer(satTle, debTle, dist);
+      }
+
+      // Trigger SQLite Log Refresh
+      fetchHistory();
+
       if (!simActive) {
         window.lastAnalysisData = data;
       }
@@ -1093,7 +1186,7 @@
       
       if (tabName === 'obs') {
         btnObs.className = 'scenario-btn active';
-        btnObs.style.background = 'var(--theme-accent)';
+        btnObs.style.background = 'var(--accent-secondary)';
         btnObs.style.color = '#000';
         btnObs.style.border = 'none';
         
@@ -1106,7 +1199,7 @@
         contentP2p.style.display = 'none';
       } else {
         btnP2p.className = 'scenario-btn active';
-        btnP2p.style.background = 'var(--theme-accent)';
+        btnP2p.style.background = 'var(--accent-secondary)';
         btnP2p.style.color = '#000';
         btnP2p.style.border = 'none';
         
@@ -1184,7 +1277,7 @@
       document.getElementById('sim-status-label').textContent = "PAUSED";
       document.getElementById('sim-status-label').style.background = "rgba(255,255,255,0.1)";
       document.getElementById('sim-toggle-btn').textContent = "RESUME SIMULATION";
-      document.getElementById('sim-toggle-btn').style.background = "var(--theme-accent)";
+      document.getElementById('sim-toggle-btn').style.background = "var(--accent-secondary)";
       document.getElementById('sim-toggle-btn').style.color = "#000";
     }
 
@@ -1197,7 +1290,7 @@
       document.getElementById('sim-status-label').textContent = "OFF";
       document.getElementById('sim-status-label').style.background = "rgba(255,255,255,0.1)";
       document.getElementById('sim-toggle-btn').textContent = "START SIMULATION";
-      document.getElementById('sim-toggle-btn').style.background = "var(--theme-accent)";
+      document.getElementById('sim-toggle-btn').style.background = "var(--accent-secondary)";
       document.getElementById('sim-toggle-btn').style.color = "#000";
       document.getElementById('sim-reset-btn').disabled = true;
       document.getElementById('sim-reset-btn').style.color = "rgba(255,255,255,0.5)";
@@ -1233,7 +1326,7 @@
         const threatAlert = document.getElementById('threat-alert');
         threatAlert.className = 'alert-banner warning';
         threatAlert.style.background = 'linear-gradient(135deg, #ff9f1c 0%, #ff6b6b 100%)';
-        threatAlert.textContent = `🔥 EXECUTING AUTONOMOUS EVASIVE BURN (Delta-V: ${npNorm(maneuver.delta_v_rtn).toFixed(4)} m/s)...`;
+        threatAlert.innerHTML = `🔥 <strong>EXECUTING EVASIVE BURN:</strong> Thrusters firing Delta-V: ${npNorm(maneuver.delta_v_rtn).toFixed(4)} m/s. Trajectory updating...`;
         
         setTimeout(() => {
           // Apply burn impact (displace debris out of collision path)
@@ -1279,10 +1372,352 @@
       return Math.sqrt(arr.reduce((sum, val) => sum + val*val, 0));
     }
 
+    // SQLite Database Log polling
+    async function fetchHistory() {
+      try {
+        const response = await fetch('/history');
+        if (!response.ok) return;
+        const data = await response.json();
+        renderHistoryTable(data);
+      } catch (err) {
+        console.error("Error fetching conjunction history:", err);
+      }
+    }
+
+    function renderHistoryTable(data) {
+      const tbody = document.getElementById('history-tbody');
+      if (!tbody) return;
+      
+      tbody.innerHTML = '';
+      if (!data || data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">No conjunction history logs found.</td></tr>`;
+        return;
+      }
+      
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.05)';
+        
+        const date = new Date(row.timestamp);
+        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        
+        let riskClass = 'nominal';
+        let riskLabel = row.overall_risk;
+        if (row.overall_risk === 'COLLISION_COURSE') {
+          riskClass = 'critical';
+          riskLabel = '🚨 COLLISION';
+        } else if (row.overall_risk === 'WARNING') {
+          riskClass = 'high';
+          riskLabel = '⚠️ WARNING';
+        } else {
+          riskLabel = '🛡️ NOMINAL';
+        }
+        
+        const distStr = row.closest_distance_km ? row.closest_distance_km.toFixed(3) + ' km' : '--';
+        const tcaStr = row.tca_min ? row.tca_min.toFixed(1) + ' min' : '--';
+        const probStr = row.collision_prob ? (row.collision_prob * 100).toFixed(4) + '%' : '0.0000%';
+        const fuelStr = row.fuel_spent_kg ? row.fuel_spent_kg.toFixed(3) + ' kg' : '0.0000 kg';
+        const maneuverStr = row.maneuver_required ? `⚠️ REQ (${fuelStr})` : 'NOT REQ';
+        
+        tr.innerHTML = `
+          <td style="padding: 12px; font-family: monospace; font-size: 11px;">${timeStr}</td>
+          <td style="padding: 12px; font-weight: 600;">NORAD #${row.satellite_id}</td>
+          <td style="padding: 12px;"><span class="risk-badge ${riskClass}">${riskLabel}</span></td>
+          <td style="padding: 12px; font-family: monospace;">${distStr}</td>
+          <td style="padding: 12px; font-family: monospace;">${tcaStr}</td>
+          <td style="padding: 12px; font-family: monospace;">${probStr}</td>
+          <td style="padding: 12px; font-family: monospace; color: ${row.maneuver_required ? 'var(--accent-warn)' : 'var(--text-muted)'};">${maneuverStr}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // CCSDS Packets compilation downloader
+    function downloadCCSDS() {
+      const dvr = parseFloat(document.getElementById('burn-r').textContent) || 0.0;
+      const dvt = parseFloat(document.getElementById('burn-t').textContent) || 0.0;
+      const dvn = parseFloat(document.getElementById('burn-n').textContent) || 0.0;
+      
+      const dvNorm = Math.sqrt(dvr*dvr + dvt*dvt + dvn*dvn);
+      const duration = dvNorm > 0 ? parseFloat((dvNorm / 0.018).toFixed(1)) : 0.0;
+      
+      const url = `/compile-binary?dvr=${dvr}&dvt=${dvt}&dvn=${dvn}&duration=${duration}`;
+      
+      // Trigger browser download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'orchid_ccsds_maneuver.bin';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    // Three.js 3D Globe Visualizer Logic
+    let scene, camera, renderer, controls;
+    let earth, satelliteMesh, debrisMesh;
+    let satelliteOrbit, debrisOrbit;
+    let is3DActive = false;
+    let is3DInitialized = false;
+
+    function toggle3DView() {
+      const radar2d = document.getElementById('radar-2d');
+      const radar3d = document.getElementById('radar-3d');
+      const btn = document.getElementById('view-toggle-btn');
+      
+      if (is3DActive) {
+        // Switch to 2D
+        radar2d.style.display = 'block';
+        radar3d.style.display = 'none';
+        btn.textContent = '3D GLOBE VIEW';
+        is3DActive = false;
+      } else {
+        // Switch to 3D
+        radar2d.style.display = 'none';
+        radar3d.style.display = 'block';
+        btn.textContent = '2D RADAR VIEW';
+        is3DActive = true;
+        
+        if (!is3DInitialized) {
+          init3D();
+        }
+        
+        // Triggers resize and rendering update based on current TLE inputs
+        const satTle = document.getElementById('sat-tle').value;
+        const debTle = document.getElementById('deb-tle').value;
+        const distText = document.getElementById('tele-dist').textContent;
+        const dist = parseFloat(distText) || 1.0;
+        update3DVisualizer(satTle, debTle, dist);
+      }
+    }
+
+    function parseTLE(tleString) {
+      if (!tleString) return { inc: 51.64, raan: 137.22 };
+      const lines = tleString.trim().split('\n');
+      if (lines.length < 2) return { inc: 51.64, raan: 137.22 };
+      const line2 = lines[1].trim();
+      const parts = line2.split(/\s+/);
+      const inc = parseFloat(parts[2]) || 51.64;
+      const raan = parseFloat(parts[3]) || 137.22;
+      return { inc, raan };
+    }
+
+    function init3D() {
+      const container = document.getElementById('three-container');
+      if (!container) return;
+      
+      container.innerHTML = '';
+      
+      const width = container.clientWidth || 400;
+      const height = container.clientHeight || 280;
+      
+      scene = new THREE.Scene();
+      
+      camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+      camera.position.set(0, 5, 12);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      container.appendChild(renderer.domElement);
+      
+      // OrbitControls setup
+      if (THREE.OrbitControls) {
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxDistance = 25;
+        controls.minDistance = 6;
+      }
+      
+      // Earth wireframe sphere
+      const earthRadius = 3.5;
+      const earthGeo = new THREE.SphereGeometry(earthRadius, 24, 24);
+      const earthMat = new THREE.MeshBasicMaterial({
+        color: 0x6C63FF,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.15
+      });
+      earth = new THREE.Mesh(earthGeo, earthMat);
+      scene.add(earth);
+      
+      // Earth solid dark core
+      const coreGeo = new THREE.SphereGeometry(earthRadius - 0.02, 16, 16);
+      const coreMat = new THREE.MeshBasicMaterial({
+        color: 0x03030d,
+        transparent: true,
+        opacity: 0.85
+      });
+      const core = new THREE.Mesh(coreGeo, coreMat);
+      earth.add(core);
+      
+      // Faint glowing equator ring
+      const equatorGeo = new THREE.RingGeometry(earthRadius + 0.05, earthRadius + 0.07, 64);
+      const equatorMat = new THREE.MeshBasicMaterial({
+        color: 0x00f5d4,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.25
+      });
+      const equator = new THREE.Mesh(equatorGeo, equatorMat);
+      equator.rotation.x = Math.PI / 2;
+      earth.add(equator);
+      
+      // Satellite marker
+      const satGeo = new THREE.SphereGeometry(0.14, 8, 8);
+      const satMat = new THREE.MeshBasicMaterial({ color: 0x00f5d4 });
+      satelliteMesh = new THREE.Mesh(satGeo, satMat);
+      scene.add(satelliteMesh);
+      
+      // Debris marker
+      const debGeo = new THREE.SphereGeometry(0.12, 8, 8);
+      const debMat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
+      debrisMesh = new THREE.Mesh(debGeo, debMat);
+      scene.add(debrisMesh);
+      
+      const resizeObserver = new ResizeObserver(() => {
+        if (!container || !renderer) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      });
+      resizeObserver.observe(container);
+      
+      is3DInitialized = true;
+      animate3D();
+    }
+
+    function createOrbits(satInc, satRaan, debInc, debRaan) {
+      if (satelliteOrbit) scene.remove(satelliteOrbit);
+      if (debrisOrbit) scene.remove(debrisOrbit);
+      
+      const earthRadius = 3.5;
+      const satOrbitRadius = earthRadius + 1.2;
+      const debOrbitRadius = earthRadius + 1.25;
+      
+      // Generate points for satellite orbit path
+      const satPoints = [];
+      const numPoints = 90;
+      for (let i = 0; i <= numPoints; i++) {
+        const theta = (i / numPoints) * Math.PI * 2;
+        const x = Math.cos(theta) * satOrbitRadius;
+        const y = Math.sin(theta) * satOrbitRadius;
+        
+        const vec = new THREE.Vector3(x, y, 0);
+        vec.applyAxisAngle(new THREE.Vector3(1, 0, 0), satInc);
+        vec.applyAxisAngle(new THREE.Vector3(0, 1, 0), satRaan);
+        satPoints.push(vec);
+      }
+      
+      const satOrbitGeo = new THREE.BufferGeometry().setFromPoints(satPoints);
+      const satOrbitMat = new THREE.LineBasicMaterial({
+        color: 0x00f5d4,
+        transparent: true,
+        opacity: 0.35
+      });
+      satelliteOrbit = new THREE.Line(satOrbitGeo, satOrbitMat);
+      scene.add(satelliteOrbit);
+      
+      // Generate points for debris orbit path
+      const debPoints = [];
+      for (let i = 0; i <= numPoints; i++) {
+        const theta = (i / numPoints) * Math.PI * 2;
+        const x = Math.cos(theta) * debOrbitRadius;
+        const y = Math.sin(theta) * debOrbitRadius;
+        
+        const vec = new THREE.Vector3(x, y, 0);
+        vec.applyAxisAngle(new THREE.Vector3(1, 0, 0), debInc);
+        vec.applyAxisAngle(new THREE.Vector3(0, 1, 0), debRaan);
+        debPoints.push(vec);
+      }
+      
+      const debOrbitGeo = new THREE.BufferGeometry().setFromPoints(debPoints);
+      const debOrbitMat = new THREE.LineBasicMaterial({
+        color: 0xff0055,
+        transparent: true,
+        opacity: 0.35
+      });
+      debrisOrbit = new THREE.Line(debOrbitGeo, debOrbitMat);
+      scene.add(debrisOrbit);
+    }
+
+    function update3DVisualizer(satTle, debTle, distKm) {
+      if (!is3DInitialized) init3D();
+      
+      const satParams = parseTLE(satTle);
+      const debParams = parseTLE(debTle);
+      
+      const satInc = satParams.inc * Math.PI / 180;
+      const satRaan = satParams.raan * Math.PI / 180;
+      const debInc = debParams.inc * Math.PI / 180;
+      const debRaan = debParams.raan * Math.PI / 180;
+      
+      createOrbits(satInc, satRaan, debInc, debRaan);
+      
+      window.currentSatInc = satInc;
+      window.currentSatRaan = satRaan;
+      window.currentDebInc = debInc;
+      window.currentDebRaan = debRaan;
+      window.conjunctionDistance = distKm;
+    }
+
+    let angleOffset = 0;
+    function animate3D() {
+      if (!is3DInitialized) return;
+      requestAnimationFrame(animate3D);
+      
+      // Slow rotation of Earth wireframe
+      if (earth) {
+        earth.rotation.y += 0.0015;
+      }
+      
+      angleOffset += 0.006;
+      const earthRadius = 3.5;
+      const satOrbitRadius = earthRadius + 1.2;
+      const debOrbitRadius = earthRadius + 1.25;
+      
+      const satInc = window.currentSatInc || (51.64 * Math.PI / 180);
+      const satRaan = window.currentSatRaan || (137.22 * Math.PI / 180);
+      const debInc = window.currentDebInc || (51.64 * Math.PI / 180);
+      const debRaan = window.currentDebRaan || (137.25 * Math.PI / 180);
+      
+      // Update satellite marker position along orbit
+      const satX = Math.cos(angleOffset) * satOrbitRadius;
+      const satY = Math.sin(angleOffset) * satOrbitRadius;
+      const satVec = new THREE.Vector3(satX, satY, 0);
+      satVec.applyAxisAngle(new THREE.Vector3(1, 0, 0), satInc);
+      satVec.applyAxisAngle(new THREE.Vector3(0, 1, 0), satRaan);
+      if (satelliteMesh) satelliteMesh.position.copy(satVec);
+      
+      // Update debris position: cross-orbital approach visual effect
+      let thetaOffset = 0.05;
+      if (window.conjunctionDistance !== undefined) {
+        const dist = window.conjunctionDistance; // distance in km
+        const maxRange = 5.0;
+        thetaOffset = (dist / maxRange) * 0.12; // visual spacing proportional to TCA distance
+      }
+      
+      const debX = Math.cos(angleOffset + thetaOffset) * debOrbitRadius;
+      const debY = Math.sin(angleOffset + thetaOffset) * debOrbitRadius;
+      const debVec = new THREE.Vector3(debX, debY, 0);
+      debVec.applyAxisAngle(new THREE.Vector3(1, 0, 0), debInc);
+      debVec.applyAxisAngle(new THREE.Vector3(0, 1, 0), debRaan);
+      if (debrisMesh) debrisMesh.position.copy(debVec);
+      
+      if (controls) {
+        controls.update();
+      }
+      
+      renderer.render(scene, camera);
+    }
+
     // Initialize WebSockets and default state on load
     window.onload = () => {
       loadScenario('critical');
       connectWS();
+      fetchHistory();
     };
   </script>
 </body>
