@@ -208,9 +208,23 @@ def generate_maneuver(satellite, conjunctions, debris_pool=None):
     )
     post_maneuver_clear = len(secondary_hazards) == 0
 
-    DRY_MASS = 500.0
-    INIT_FUEL = 50.0
-    fuel_cost = tsiolkovsky(np.linalg.norm(dv), DRY_MASS + INIT_FUEL)
+    dry_mass = 500.0
+    init_fuel = 50.0
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conjunction_history.db")
+    try:
+        import sqlite3
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT current_fuel_kg FROM fleet_satellites WHERE norad_id = ?", (satellite.norad_id,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                init_fuel = float(row[0])
+    except Exception as e:
+        print(f"Failed to lookup fleet satellite fuel: {e}")
+
+    fuel_cost = tsiolkovsky(np.linalg.norm(dv), dry_mass + init_fuel)
     from datetime import datetime, timezone, timedelta
     burn_time = datetime.now(timezone.utc) + timedelta(minutes=minutes_until_burn)
     
@@ -240,6 +254,7 @@ def resolve_multi_agent_conjunction(satellite, primary_conjunction):
     import hashlib
     import hmac
     import os
+    import sqlite3
     
     sat_id = satellite.norad_id
     deb_id = primary_conjunction.get("object_id", "Unknown")
@@ -254,6 +269,31 @@ def resolve_multi_agent_conjunction(satellite, primary_conjunction):
 
     logs = []
     if is_active_threat:
+        # Check database for fuel details
+        fuel_a = 50.0
+        fuel_b = 50.0
+        name_a = f"Sat A ({sat_id})"
+        name_b = f"Sat B ({deb_id})"
+        
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conjunction_history.db")
+        try:
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name, current_fuel_kg FROM fleet_satellites WHERE norad_id = ?", (sat_id,))
+                row_a = cursor.fetchone()
+                if row_a:
+                    name_a = row_a[0]
+                    fuel_a = float(row_a[1])
+                cursor.execute("SELECT name, current_fuel_kg FROM fleet_satellites WHERE norad_id = ?", (deb_id,))
+                row_b = cursor.fetchone()
+                if row_b:
+                    name_b = row_b[0]
+                    fuel_b = float(row_b[1])
+                conn.close()
+        except Exception as e:
+            print(f"Error querying fleet fuel levels for P2P negotiation: {e}")
+
         # Generate dynamic cryptographic key seeds
         secret_seed_a = os.urandom(16)
         secret_seed_b = os.urandom(16)
@@ -267,16 +307,21 @@ def resolve_multi_agent_conjunction(satellite, primary_conjunction):
         
         logs.append(f"[P2P-LINK] Cryptographic link established with payload #{deb_id}.")
         logs.append(f"[ZKP-INIT] Initializing zero-knowledge verification protocol.")
-        logs.append(f"[ZKP-COMMIT] Sat A generated orbit commitment: {commitment_a[:32]}...")
-        logs.append(f"[ZKP-COMMIT] Sat B generated orbit commitment: {commitment_b[:32]}...")
-        logs.append(f"[DECISION] Sat A (local) Fuel: 48.2 kg | Sat B (remote) Fuel: 12.4 kg")
-        logs.append(f"[DECISION] Sat A has higher fuel reserve. Assigned as maneuvering agent.")
-        logs.append(f"[ZKP-CHALLENGE] Sat B submitted safety challenges for TCA interval.")
-        logs.append(f"[ZKP-PROOF] Sat A generated distance proof signature: {proof_sig[:32]}...")
-        logs.append(f"[ZKP-VERIFY] Sat B validated ZK proofs. Maneuver locked. Orbit privacy preserved.")
+        logs.append(f"[ZKP-COMMIT] {name_a} generated orbit commitment: {commitment_a[:32]}...")
+        logs.append(f"[ZKP-COMMIT] {name_b} generated orbit commitment: {commitment_b[:32]}...")
+        logs.append(f"[DECISION] {name_a} Fuel: {fuel_a:.1f} kg | {name_b} Fuel: {fuel_b:.1f} kg")
+        
+        if fuel_a >= fuel_b:
+            logs.append(f"[DECISION] {name_a} has higher fuel reserve. Assigned as maneuvering agent.")
+        else:
+            logs.append(f"[DECISION] {name_b} has higher fuel reserve. Assigned as maneuvering agent.")
+            
+        logs.append(f"[ZKP-CHALLENGE] Non-maneuvering agent submitted safety challenges.")
+        logs.append(f"[ZKP-PROOF] Maneuvering agent generated distance proof signature: {proof_sig[:32]}...")
+        logs.append(f"[ZKP-VERIFY] Verification complete. Maneuver locked. Orbit privacy preserved.")
     else:
         logs.append(f"[SENSOR-LOG] Target identified as passive orbital debris (NORAD #{deb_id}).")
-        logs.append(f"[DECISION] Direct link unavailable. Sat A assigned to perform unilateral evasive burn.")
+        logs.append(f"[DECISION] Direct link unavailable. Unilateral evasive burn required.")
         
     return logs
 

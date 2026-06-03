@@ -11,3 +11,6 @@ gymnasium==0.29.1
 cloudpickle==3.1.2
 aiofiles==23.2.1
 apscheduler==3.10.4
+twilio==9.1.1
+sendgrid==6.11.0
+websockets==12.0

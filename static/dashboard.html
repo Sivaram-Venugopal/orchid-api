@@ -367,6 +367,133 @@
             color: var(--text-secondary);
             text-align: right;
         }
+
+        /* Fleet Management Deck */
+        .fleet-container {
+            margin-top: 2.5rem;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        @media (min-width: 1024px) {
+            .fleet-container {
+                grid-template-columns: 1fr 1.5fr;
+            }
+        }
+
+        .fleet-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .fleet-list-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .fleet-sat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .fleet-sat-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(56, 189, 248, 0.2);
+        }
+
+        .fuel-bar-container {
+            width: 120px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+
+        .fuel-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .fuel-bar.high {
+            background: var(--color-low);
+        }
+
+        .fuel-bar.medium {
+            background: var(--color-medium);
+        }
+
+        .fuel-bar.low {
+            background: var(--color-critical);
+            box-shadow: 0 0 8px var(--color-critical);
+        }
+
+        .register-sat-form {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .register-input {
+            background: rgba(15, 22, 42, 0.6);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            border-radius: 6px;
+            padding: 0.5rem;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            flex-grow: 1;
+        }
+
+        .register-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+        }
+
+        .register-btn {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border: none;
+            border-radius: 6px;
+            color: white;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .register-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .delete-sat-btn {
+            background: transparent;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 4px;
+            color: var(--color-critical);
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .delete-sat-btn:hover {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: var(--color-critical);
+        }
     </style>
 </head>
 <body>
@@ -437,6 +564,54 @@
                             <tr>
                                 <td colspan="6">
                                     <div class="empty-state">No real conjunction threat data loaded. Waiting for feed...</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fleet Operations Deck -->
+        <div class="fleet-container">
+            <!-- Fleet Registry Card -->
+            <div class="glass-card">
+                <div class="fleet-header">
+                    <h2 class="table-title">🛰️ Constellation Fleet Registry</h2>
+                    <span class="live-indicator" style="background-color: var(--accent-blue); box-shadow: 0 0 10px var(--accent-blue);"></span>
+                </div>
+                <div class="fleet-list-wrapper" id="fleetList">
+                    <div class="empty-state" style="padding: 2rem;">Loading fleet roster...</div>
+                </div>
+                
+                <div class="register-sat-form">
+                    <input type="text" id="registerNoradId" class="register-input" placeholder="Enter NORAD ID (e.g., 25544)" />
+                    <button onclick="registerFleetSatellite()" class="register-btn">Add to Fleet</button>
+                </div>
+            </div>
+
+            <!-- Fleet Active Conjunctions Table Card -->
+            <div class="glass-card table-panel" style="min-height: auto;">
+                <div class="table-header-container">
+                    <h2 class="table-title">⚠️ Fleet Active Close Approaches</h2>
+                    <span id="fleetStatusMessage" class="update-time-container">Status nominal</span>
+                </div>
+                <div class="table-scroller" style="max-height: 350px;">
+                    <table id="fleetConjunctionsTable">
+                        <thead>
+                            <tr>
+                                <th>Fleet Satellite / Threat Debris</th>
+                                <th>Min Range (km)</th>
+                                <th>TCA Window</th>
+                                <th>Risk Level</th>
+                                <th>Collision Prob</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleetTableBody">
+                            <tr>
+                                <td colspan="6">
+                                    <div class="empty-state" style="padding: 2rem;">No active fleet conjunctions detected. Constellation clear.</div>
                                 </td>
                             </tr>
                         </tbody>
@@ -594,6 +769,7 @@
                     if (message.type === 'live_dashboard_update') {
                         console.log("Received WebSocket live update.");
                         updateUI(message.data);
+                        fetchFleet();
                     }
                 } catch (e) {
                     console.error("Error parsing WebSocket message:", e);
@@ -619,6 +795,7 @@
                     const data = await response.json();
                     updateUI(data);
                 }
+                fetchFleet(); // Refresh fleet roster and fuel meters
             } catch (err) {
                 console.error("Error fetching live conjunctions:", err);
             }
@@ -630,6 +807,97 @@
                 fetchData();
             }
         }, 15000); // 15 seconds polling fallback
+
+        // Fleet Registry Handlers
+        async function fetchFleet() {
+            try {
+                const response = await fetch('/fleet');
+                if (response.ok) {
+                    const fleet = await response.json();
+                    renderFleet(fleet);
+                }
+            } catch (err) {
+                console.error("Error fetching fleet registry:", err);
+            }
+        }
+
+        function renderFleet(fleet) {
+            const listWrapper = document.getElementById('fleetList');
+            listWrapper.innerHTML = '';
+
+            if (fleet.length === 0) {
+                listWrapper.innerHTML = `
+                    <div class="empty-state" style="padding: 2.5rem 2rem;">
+                        No operational satellites registered in constellation.
+                    </div>`;
+                return;
+            }
+
+            fleet.forEach(sat => {
+                const item = document.createElement('div');
+                item.className = 'fleet-sat-item';
+
+                const pct = (sat.current_fuel_kg / sat.fuel_capacity_kg) * 100;
+                let fuelClass = 'high';
+                if (pct < 15) fuelClass = 'low';
+                else if (pct < 50) fuelClass = 'medium';
+
+                let statusBadgeClass = 'badge-low';
+                if (sat.status === 'FUEL_CRITICAL') statusBadgeClass = 'badge-critical';
+                else if (sat.status === 'MANEUVERING') statusBadgeClass = 'badge-high';
+
+                item.innerHTML = `
+                    <div style="flex-grow: 1;">
+                        <div style="font-weight:600; display:flex; align-items:center; gap:0.5rem; flex-wrap: wrap;">
+                            <span style="color: #ffffff">${sat.name}</span>
+                            <span style="font-size:0.75rem; color:var(--text-secondary)">(${sat.norad_id})</span>
+                            <span class="badge ${statusBadgeClass}" style="padding:0.1rem 0.35rem; font-size:0.65rem;">${sat.status}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.25rem;">
+                            <span style="font-size:0.75rem; color:var(--text-secondary)">Propellant:</span>
+                            <div class="fuel-bar-container">
+                                <div class="fuel-bar ${fuelClass}" style="width: ${pct}%"></div>
+                            </div>
+                            <span style="font-size:0.75rem; font-family:monospace; color: #e2e8f0">${sat.current_fuel_kg.toFixed(1)}/${sat.fuel_capacity_kg.toFixed(0)} kg</span>
+                        </div>
+                    </div>
+                    <button onclick="deleteFleetSatellite('${sat.norad_id}')" class="delete-sat-btn">Remove</button>
+                `;
+                listWrapper.appendChild(item);
+            });
+        }
+
+        async function registerFleetSatellite() {
+            const idInput = document.getElementById('registerNoradId');
+            const satId = idInput.value.trim();
+            if (!satId) return;
+
+            try {
+                document.getElementById('statusMessage').innerText = "Registering satellite...";
+                const response = await fetch(`/fleet/register?sat_id=${satId}`, { method: 'POST' });
+                if (response.ok) {
+                    idInput.value = '';
+                    fetchData();
+                } else {
+                    const err = await response.json();
+                    alert(`Failed to register satellite: ${err.detail || 'unknown error'}`);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function deleteFleetSatellite(noradId) {
+            if (!confirm(`Are you sure you want to remove satellite ${noradId} from the operational fleet?`)) return;
+            try {
+                const response = await fetch(`/fleet/${noradId}`, { method: 'DELETE' });
+                if (response.ok) {
+                    fetchData();
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
 
         // Update Dashboard UI
         function updateUI(data) {
@@ -648,7 +916,7 @@
             const updatedDate = new Date(data.timestamp);
             document.getElementById('statUpdated').innerText = updatedDate.toLocaleTimeString();
 
-            // Populate Table
+            // Populate Public Table
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
 
@@ -659,61 +927,129 @@
                             <div class="empty-state">No conjunctions detected within parameters. Current space corridor is clean.</div>
                         </td>
                     </tr>`;
-                return;
+            } else {
+                conjunctions.forEach(c => {
+                    const p = c.primary;
+                    const s = c.secondary;
+                    const assess = c.risk_assessment;
+                    
+                    const tr = document.createElement('tr');
+                    
+                    let badgeClass = 'badge-low';
+                    if (assess.risk_level === 'CRITICAL') badgeClass = 'badge-critical';
+                    else if (assess.risk_level === 'HIGH') badgeClass = 'badge-high';
+                    else if (assess.risk_level === 'MEDIUM') badgeClass = 'badge-medium';
+
+                    const tcaMin = assess.time_to_closest_approach_min;
+                    let tcaStr = `${tcaMin.toFixed(0)} mins`;
+                    if (tcaMin > 60) {
+                        const hrs = Math.floor(tcaMin / 60);
+                        const mins = Math.round(tcaMin % 60);
+                        tcaStr = `${hrs}h ${mins}m`;
+                    }
+
+                    const p_collision = assess.probability_of_collision;
+                    const pStr = p_collision < 1e-5 ? p_collision.toExponential(3) : p_collision.toFixed(5);
+
+                    tr.innerHTML = `
+                        <td>
+                            <div class="object-cell">
+                                <span class="object-name">${p.name} <span style="font-weight:400; color:var(--text-secondary)">(${p.norad_id})</span></span>
+                                <span class="conjunction-relation">⚡ Conjoins with</span>
+                                <span class="object-name" style="color:#cbd5e1">${s.name} <span style="font-weight:400; color:var(--text-secondary)">(${s.norad_id})</span></span>
+                            </div>
+                        </td>
+                        <td>
+                            <div style="font-weight: 500">${assess.distance_km.toFixed(4)} km</div>
+                        </td>
+                        <td>
+                            <div>${tcaStr}</div>
+                        </td>
+                        <td>
+                            <span class="badge ${badgeClass}">${assess.risk_level}</span>
+                        </td>
+                        <td>
+                            <div style="font-family: monospace">${pStr}</div>
+                        </td>
+                        <td>
+                            <a href="/ui?primary_id=${p.norad_id}&secondary_id=${s.norad_id}" class="action-link" target="_blank">Assess Avoidance</a>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
             }
 
-            conjunctions.forEach(c => {
-                const p = c.primary;
-                const s = c.secondary;
-                const assess = c.risk_assessment;
-                
-                const tr = document.createElement('tr');
-                
-                // Badges class matching
-                let badgeClass = 'badge-low';
-                if (assess.risk_level === 'CRITICAL') badgeClass = 'badge-critical';
-                else if (assess.risk_level === 'HIGH') badgeClass = 'badge-high';
-                else if (assess.risk_level === 'MEDIUM') badgeClass = 'badge-medium';
+            // Populate Fleet Conjunctions Table
+            const fleetTbody = document.getElementById('fleetTableBody');
+            fleetTbody.innerHTML = '';
+            
+            const fleetConjs = data.fleet_conjunctions || [];
+            
+            const criticalFleetCount = fleetConjs.filter(c => c.risk_assessment.risk_level === 'CRITICAL').length;
+            if (criticalFleetCount > 0) {
+                document.getElementById('fleetStatusMessage').innerHTML = `<span style="color:var(--color-critical); font-weight:600;">⚠️ ${criticalFleetCount} CRITICAL FLEET ALERTS ACTIVE</span>`;
+            } else {
+                document.getElementById('fleetStatusMessage').innerText = "Status nominal";
+            }
 
-                // Format Time to closest approach
-                const tcaMin = assess.time_to_closest_approach_min;
-                let tcaStr = `${tcaMin.toFixed(0)} mins`;
-                if (tcaMin > 60) {
-                    const hrs = Math.floor(tcaMin / 60);
-                    const mins = Math.round(tcaMin % 60);
-                    tcaStr = `${hrs}h ${mins}m`;
-                }
+            if (fleetConjs.length === 0) {
+                fleetTbody.innerHTML = `
+                    <tr>
+                        <td colspan="6">
+                            <div class="empty-state" style="padding: 2rem;">No active fleet conjunctions detected. Constellation clear.</div>
+                        </td>
+                    </tr>`;
+            } else {
+                fleetConjs.forEach(c => {
+                    const p = c.primary;
+                    const s = c.secondary;
+                    const assess = c.risk_assessment;
+                    
+                    const tr = document.createElement('tr');
+                    
+                    let badgeClass = 'badge-low';
+                    if (assess.risk_level === 'CRITICAL') badgeClass = 'badge-critical';
+                    else if (assess.risk_level === 'HIGH') badgeClass = 'badge-high';
+                    else if (assess.risk_level === 'MEDIUM') badgeClass = 'badge-medium';
 
-                // Probability formatting (scientific notation)
-                const p_collision = assess.probability_of_collision;
-                const pStr = p_collision < 1e-5 ? p_collision.toExponential(3) : p_collision.toFixed(5);
+                    const tcaMin = assess.time_to_closest_approach_min;
+                    let tcaStr = `${tcaMin.toFixed(0)} mins`;
+                    if (tcaMin > 60) {
+                        const hrs = Math.floor(tcaMin / 60);
+                        const mins = Math.round(tcaMin % 60);
+                        tcaStr = `${hrs}h ${mins}m`;
+                    }
 
-                tr.innerHTML = `
-                    <td>
-                        <div class="object-cell">
-                            <span class="object-name">${p.name} <span style="font-weight:400; color:var(--text-secondary)">(${p.norad_id})</span></span>
-                            <span class="conjunction-relation">⚡ Conjoins with</span>
-                            <span class="object-name" style="color:#cbd5e1">${s.name} <span style="font-weight:400; color:var(--text-secondary)">(${s.norad_id})</span></span>
-                        </div>
-                    </td>
-                    <td>
-                        <div style="font-weight: 500">${assess.distance_km.toFixed(4)} km</div>
-                    </td>
-                    <td>
-                        <div>${tcaStr}</div>
-                    </td>
-                    <td>
-                        <span class="badge ${badgeClass}">${assess.risk_level}</span>
-                    </td>
-                    <td>
-                        <div style="font-family: monospace">${pStr}</div>
-                    </td>
-                    <td>
-                        <a href="/ui?primary_id=${p.norad_id}&secondary_id=${s.norad_id}" class="action-link" target="_blank">Assess Avoidance</a>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
+                    const p_collision = assess.probability_of_collision;
+                    const pStr = p_collision < 1e-5 ? p_collision.toExponential(3) : p_collision.toFixed(5);
+
+                    tr.innerHTML = `
+                        <td>
+                            <div class="object-cell">
+                                <span class="object-name" style="color: var(--accent-blue)">${p.name} <span style="font-weight:400; color:var(--text-secondary)">(${p.norad_id})</span></span>
+                                <span class="conjunction-relation">⚡ Close approach with</span>
+                                <span class="object-name" style="color:#cbd5e1">${s.name} <span style="font-weight:400; color:var(--text-secondary)">(${s.norad_id})</span></span>
+                            </div>
+                        </td>
+                        <td>
+                            <div style="font-weight: 500">${assess.distance_km.toFixed(4)} km</div>
+                        </td>
+                        <td>
+                            <div>${tcaStr}</div>
+                        </td>
+                        <td>
+                            <span class="badge ${badgeClass}">${assess.risk_level}</span>
+                        </td>
+                        <td>
+                            <div style="font-family: monospace">${pStr}</div>
+                        </td>
+                        <td>
+                            <a href="/ui?primary_id=${p.norad_id}&secondary_id=${s.norad_id}" class="action-link" target="_blank">Assess Avoidance</a>
+                        </td>
+                    `;
+                    fleetTbody.appendChild(tr);
+                });
+            }
         }
 
         // Initialize App

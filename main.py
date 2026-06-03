@@ -47,7 +47,48 @@ def init_db():
             fuel_spent_kg REAL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fleet_satellites (
+            norad_id TEXT PRIMARY KEY,
+            name TEXT,
+            status TEXT,
+            fuel_capacity_kg REAL,
+            current_fuel_kg REAL,
+            tle1 TEXT,
+            tle2 TEXT
+        )
+    """)
     conn.commit()
+
+    # Seed fleet_satellites if empty
+    cursor.execute("SELECT COUNT(*) FROM fleet_satellites")
+    if cursor.fetchone()[0] == 0:
+        logger.info("Seeding default fleet satellites from catalog...")
+        try:
+            from catalog_manager import load_tle_catalog
+            catalog = load_tle_catalog()
+            # Select ISS (25544) and others if available
+            seed_ids = ["25544", "48274", "25338", "33591"]
+            for sid in seed_ids:
+                if sid in catalog:
+                    sat = catalog[sid]
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO fleet_satellites (norad_id, name, status, fuel_capacity_kg, current_fuel_kg, tle1, tle2)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (sid, sat["name"], "ACTIVE", 300.0, 250.0, sat["line1"], sat["line2"]))
+                else:
+                    active_keys = [k for k, v in catalog.items() if v.get("type") == "active"]
+                    if active_keys:
+                        k = active_keys[len(active_keys) // 2]
+                        sat = catalog[k]
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO fleet_satellites (norad_id, name, status, fuel_capacity_kg, current_fuel_kg, tle1, tle2)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (k, sat["name"], "ACTIVE", 200.0, 180.0, sat["line1"], sat["line2"]))
+            conn.commit()
+            logger.info("Successfully seeded fleet database.")
+        except Exception as e:
+            logger.error(f"Failed to seed fleet satellites: {e}")
     conn.close()
 
 def log_to_db(satellite_id, overall_risk, conjunctions, maneuver_required, fuel_spent_kg):
@@ -71,9 +112,27 @@ def log_to_db(satellite_id, overall_risk, conjunctions, maneuver_required, fuel_
             fuel_spent_kg
         ))
         conn.commit()
+        
+        # Deduct fuel if it is a registered fleet satellite
+        if maneuver_required and fuel_spent_kg > 0:
+            cursor.execute("""
+                UPDATE fleet_satellites 
+                SET current_fuel_kg = MAX(0.0, current_fuel_kg - ?)
+                WHERE norad_id = ?
+            """, (fuel_spent_kg, satellite_id))
+            
+            # Transition status to FUEL_CRITICAL if fuel drops below 5%
+            cursor.execute("""
+                UPDATE fleet_satellites 
+                SET status = 'FUEL_CRITICAL'
+                WHERE norad_id = ? AND current_fuel_kg < (fuel_capacity_kg * 0.05)
+            """, (satellite_id,))
+            conn.commit()
+            logger.info(f"Deducted {fuel_spent_kg:.4f} kg fuel from fleet satellite {satellite_id}.")
+            
         conn.close()
     except Exception as e:
-        logger.error(f"Failed to log conjunction to SQLite database: {e}")
+        logger.error(f"Failed to log conjunction and update fleet fuel: {e}")
 
 async def simulated_observation_feed():
     import random
@@ -533,6 +592,79 @@ def get_history():
     except Exception as e:
         logger.error(f"Failed to fetch conjunction history from SQLite: {e}")
         raise HTTPException(status_code=500, detail="Internal database error")
+
+@app.get("/fleet")
+def get_fleet():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT norad_id, name, status, fuel_capacity_kg, current_fuel_kg, tle1, tle2 FROM fleet_satellites")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        fleet = []
+        for row in rows:
+            fleet.append({
+                "norad_id": row[0],
+                "name": row[1],
+                "status": row[2],
+                "fuel_capacity_kg": row[3],
+                "current_fuel_kg": row[4],
+                "tle1": row[5],
+                "tle2": row[6]
+            })
+        return fleet
+    except Exception as e:
+        logger.error(f"Failed to fetch fleet satellites: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/fleet/register")
+def register_fleet(sat_id: str, background_tasks: BackgroundTasks):
+    from catalog_manager import load_tle_catalog
+    catalog = load_tle_catalog()
+    
+    if sat_id not in catalog:
+        raise HTTPException(status_code=404, detail=f"Satellite ID {sat_id} not found in catalog")
+        
+    sat = catalog[sat_id]
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO fleet_satellites (norad_id, name, status, fuel_capacity_kg, current_fuel_kg, tle1, tle2)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (sat_id, sat["name"], "ACTIVE", 300.0, 300.0, sat["line1"], sat["line2"]))
+        conn.commit()
+        conn.close()
+        logger.info(f"Registered new fleet satellite {sat_id} in database.")
+        
+        # Trigger live conjunction calculation background job immediately to update cache
+        from live_feed import fetch_live_conjunctions_data
+        background_tasks.add_task(fetch_live_conjunctions_data)
+        
+        return {"status": "success", "message": f"Satellite {sat['name']} registered in fleet."}
+    except Exception as e:
+        logger.error(f"Failed to register fleet satellite: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/fleet/{norad_id}")
+def delete_fleet(norad_id: str, background_tasks: BackgroundTasks):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM fleet_satellites WHERE norad_id = ?", (norad_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"Unregistered fleet satellite {norad_id} from database.")
+        
+        # Trigger live conjunction calculation background job immediately to update cache
+        from live_feed import fetch_live_conjunctions_data
+        background_tasks.add_task(fetch_live_conjunctions_data)
+        
+        return {"status": "success", "message": f"Satellite {norad_id} removed from fleet."}
+    except Exception as e:
+        logger.error(f"Failed to remove fleet satellite: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/compile-binary")
 def compile_binary(dvr: float = 0.0, dvt: float = 0.0, dvn: float = 0.0, duration: float = 0.0):
