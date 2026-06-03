@@ -619,6 +619,69 @@
                 </div>
             </div>
         </div>
+
+        <!-- Machine Learning & Coordination Center (Phase 8) -->
+        <div class="fleet-container" style="margin-top: 2.5rem;">
+            <!-- Secured Federated Learning Coordinator Card -->
+            <div class="glass-card">
+                <div class="fleet-header">
+                    <h2 class="table-title">🤝 Secured Federated Learning Coordinator</h2>
+                    <span class="live-indicator" style="background-color: var(--accent-purple); box-shadow: 0 0 10px var(--accent-purple);"></span>
+                </div>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Operators (SpaceX, OneWeb, ISRO) submit local RL model weights signed via HMAC to train the global avoidance policy without exposing raw coordinate data.
+                </p>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <span style="font-size: 0.8rem; color: var(--text-primary); font-weight: 600;">Simulate Operator Run:</span>
+                        <select id="fedOperatorSelect" class="register-input" style="max-width: 150px; padding: 0.25rem;">
+                            <option value="operator_spacex">SpaceX (Starlink)</option>
+                            <option value="operator_oneweb">OneWeb</option>
+                            <option value="operator_isro">ISRO</option>
+                        </select>
+                        <button onclick="submitFederatedWeights()" class="register-btn" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">Submit Weights</button>
+                    </div>
+                    <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); padding: 0.75rem; border-radius: 8px; font-family: monospace; font-size: 0.75rem; color: #a855f7;">
+                        <span>Queue Status:</span> <span id="fedQueueCount" style="font-weight: bold; color: #fff;">0 queued</span>
+                        <div id="fedQueueOperators" style="color: var(--text-secondary); font-size: 0.7rem; margin-top: 0.25rem;">No active submissions.</div>
+                    </div>
+                </div>
+                <button onclick="aggregateFederatedWeights()" class="register-btn" style="width: 100%; background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));">
+                    ⚙️ Trigger Federated Avg Weight Aggregation
+                </button>
+                <div id="fedResultConsole" style="display: none; margin-top: 1rem; background: rgba(5,5,15,0.8); border: 1px solid rgba(168,85,247,0.2); border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.7rem; color: #a855f7; max-height: 120px; overflow-y: auto;">
+                </div>
+            </div>
+
+            <!-- Orbital Forecast & Anomaly Detection Control Card -->
+            <div class="glass-card">
+                <div class="fleet-header">
+                    <h2 class="table-title">🧠 ML Forecast & Orbital Anomaly Detector</h2>
+                    <span class="live-indicator" style="background-color: var(--accent-blue); box-shadow: 0 0 10px var(--accent-blue);"></span>
+                </div>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Runs SGP4 vs UKF covariance drift checks for unannounced maneuvers, and queries the PyTorch LSTM network for 7-day orbital trajectory forecasting.
+                </p>
+                <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem;">
+                    <span style="font-size: 0.8rem; color: var(--text-primary); font-weight: 600;">Select Fleet Asset:</span>
+                    <select id="mlSatelliteSelect" class="register-input" style="padding: 0.35rem;">
+                        <option value="">-- Choose Satellite --</option>
+                    </select>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <button onclick="checkSatelliteAnomaly()" class="register-btn" style="background: linear-gradient(135deg, #f97316, #ef4444);">
+                        🔍 Check Orbit Anomaly
+                    </button>
+                    <button onclick="forecastTrajectory7d()" class="register-btn" style="background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));">
+                        🔮 Forecast 7d Path (LSTM)
+                    </button>
+                </div>
+
+                <div id="mlConsole" style="display: none; margin-top: 1rem; background: rgba(5,5,15,0.8); border: 1px solid rgba(56,189,248,0.2); border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.75rem; max-height: 160px; overflow-y: auto; text-align: left; line-height: 1.4;">
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -825,12 +888,28 @@
             const listWrapper = document.getElementById('fleetList');
             listWrapper.innerHTML = '';
 
+            // Update ML select dropdown
+            const selectEl = document.getElementById('mlSatelliteSelect');
+            const prevVal = selectEl.value;
+            selectEl.innerHTML = '<option value="">-- Choose Satellite --</option>';
+
             if (fleet.length === 0) {
                 listWrapper.innerHTML = `
                     <div class="empty-state" style="padding: 2.5rem 2rem;">
                         No operational satellites registered in constellation.
                     </div>`;
                 return;
+            }
+
+            fleet.forEach(sat => {
+                const opt = document.createElement('option');
+                opt.value = sat.norad_id;
+                opt.textContent = `${sat.name} (${sat.norad_id})`;
+                selectEl.appendChild(opt);
+            });
+
+            if (fleet.some(s => s.norad_id === prevVal)) {
+                selectEl.value = prevVal;
             }
 
             fleet.forEach(sat => {
@@ -1049,6 +1128,157 @@
                     `;
                     fleetTbody.appendChild(tr);
                 });
+            }
+        }
+
+        // Phase 8 ML Handlers
+        let queuedOperators = [];
+        
+        async function submitFederatedWeights() {
+            const operator = document.getElementById('fedOperatorSelect').value;
+            const consoleEl = document.getElementById('fedResultConsole');
+            consoleEl.style.display = 'block';
+            consoleEl.innerHTML = `<div>[FL] Generating signed weights simulation payload for ${operator}...</div>`;
+            
+            try {
+                // 1. Ask backend to generate signed simulated payload
+                const genResponse = await fetch(`/federated/generate-simulation-payload?operator_id=${operator}&sample_count=${Math.floor(Math.random() * 400) + 100}`, {
+                    method: 'POST'
+                });
+                if (!genResponse.ok) {
+                    const err = await genResponse.json();
+                    consoleEl.innerHTML += `<div style="color: var(--color-critical)">[ERROR] Generation failed: ${err.detail || 'unknown error'}</div>`;
+                    return;
+                }
+                const payload = await genResponse.json();
+                
+                // 2. Submit signed payload to coordinator
+                consoleEl.innerHTML += `<div>[FL] Submitting weights signature: ${payload.signature.substring(0, 16)}...</div>`;
+                const subResponse = await fetch('/federated/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (subResponse.ok) {
+                    const res = await subResponse.json();
+                    consoleEl.innerHTML += `<div style="color: var(--color-low)">[FL SUCCESS] ${res.message}</div>`;
+                    const cleanOpName = operator.replace('operator_', '').toUpperCase();
+                    if (!queuedOperators.includes(cleanOpName)) {
+                        queuedOperators.push(cleanOpName);
+                    }
+                    updateFedQueueUI();
+                } else {
+                    const err = await subResponse.json();
+                    consoleEl.innerHTML += `<div style="color: var(--color-critical)">[FL ERROR] Submission failed: ${err.detail || 'unknown error'}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                consoleEl.innerHTML += `<div style="color: var(--color-critical)">[FL ERROR] Net error: ${e.message}</div>`;
+            }
+        }
+        
+        function updateFedQueueUI() {
+            document.getElementById('fedQueueCount').innerText = `${queuedOperators.length} queued`;
+            if (queuedOperators.length > 0) {
+                document.getElementById('fedQueueOperators').innerText = `Active submissions: ${queuedOperators.join(', ')}`;
+            } else {
+                document.getElementById('fedQueueOperators').innerText = 'No active submissions.';
+            }
+        }
+        
+        async function aggregateFederatedWeights() {
+            const consoleEl = document.getElementById('fedResultConsole');
+            consoleEl.style.display = 'block';
+            consoleEl.innerHTML += `<div>[FL] Sending aggregation request (FedAvg) to coordinator...</div>`;
+            
+            try {
+                const response = await fetch('/federated/aggregate', { method: 'POST' });
+                if (response.ok) {
+                    const res = await response.json();
+                    consoleEl.innerHTML += `<div style="color: var(--accent-blue)">[FL SUCCESS] ${res.message}</div>`;
+                    consoleEl.innerHTML += `<div style="color: #cbd5e1">Global weights aggregate: [${res.global_weights.length} layers aggregated]</div>`;
+                    queuedOperators = [];
+                    updateFedQueueUI();
+                } else {
+                    const err = await response.json();
+                    consoleEl.innerHTML += `<div style="color: var(--color-critical)">[FL ERROR] Aggregation failed: ${err.detail || 'unknown error'}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                consoleEl.innerHTML += `<div style="color: var(--color-critical)">[FL ERROR] Net error: ${e.message}</div>`;
+            }
+        }
+        
+        async function checkSatelliteAnomaly() {
+            const satId = document.getElementById('mlSatelliteSelect').value;
+            const consoleEl = document.getElementById('mlConsole');
+            if (!satId) {
+                alert('Please select a fleet satellite first.');
+                return;
+            }
+            consoleEl.style.display = 'block';
+            consoleEl.innerHTML = `<div style="color: var(--accent-blue)">[ANOMALY CHECK] Fetching catalog TLE and checking orbital drift for NORAD ${satId}...</div>`;
+            
+            try {
+                const response = await fetch(`/anomaly/check/${satId}`, { method: 'POST' });
+                if (response.ok) {
+                    const res = await response.json();
+                    const anomalyColor = res.anomaly_detected ? 'var(--color-critical)' : 'var(--color-low)';
+                    const anomalyText = res.anomaly_detected ? '⚠️ ANOMALY DETECTED (DRIFTING)' : '🟢 NOMINAL (INTEGRITY SECURE)';
+                    
+                    consoleEl.innerHTML = `
+                        <div style="font-weight: bold; color: ${anomalyColor}">${anomalyText}</div>
+                        <div style="color: var(--text-secondary); margin-top: 0.25rem;">
+                            Asset Name: <span style="color:#fff">${res.satellite_name}</span><br>
+                            Spatial Deviation: <span style="color:#fff">${res.deviation_km.toFixed(4)} km</span><br>
+                            Threshold Limit: <span style="color:#fff">${res.threshold_km} km</span><br>
+                            Check Epoch: <span style="color:#fff">${new Date(res.epoch_utc).toLocaleTimeString()}</span>
+                        </div>
+                    `;
+                } else {
+                    const err = await response.json();
+                    consoleEl.innerHTML = `<div style="color: var(--color-critical)">[ERROR] Anomaly check failed: ${err.detail || 'unknown error'}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                consoleEl.innerHTML = `<div style="color: var(--color-critical)">[ERROR] Net error: ${e.message}</div>`;
+            }
+        }
+        
+        async function forecastTrajectory7d() {
+            const satId = document.getElementById('mlSatelliteSelect').value;
+            const consoleEl = document.getElementById('mlConsole');
+            if (!satId) {
+                alert('Please select a fleet satellite first.');
+                return;
+            }
+            consoleEl.style.display = 'block';
+            consoleEl.innerHTML = `<div style="color: var(--accent-blue)">[LSTM PREDICTOR] Propagating sequence and querying 7-day orbital forecast model...</div>`;
+            
+            try {
+                const response = await fetch(`/predict/7d/${satId}`, { method: 'POST' });
+                if (response.ok) {
+                    const res = await response.json();
+                    const methodColor = res.method === 'LSTM_Predictor' ? '#a855f7' : 'var(--accent-blue)';
+                    
+                    consoleEl.innerHTML = `
+                        <div style="font-weight: bold; color: var(--color-low)">🟢 7-DAY FORECAST COMPLETE</div>
+                        <div style="color: var(--text-secondary); margin-top: 0.25rem;">
+                            Forecast Model: <span style="font-weight:bold; color:${methodColor}">${res.method}</span><br>
+                            Current [X, Y, Z] (km):<br>
+                            <span style="font-family:monospace; color:#fff">[ ${res.current_position_km[0].toFixed(2)}, ${res.current_position_km[1].toFixed(2)}, ${res.current_position_km[2].toFixed(2)} ]</span><br>
+                            Predicted [X, Y, Z] at T+7d (km):<br>
+                            <span style="font-family:monospace; color:#e0e0ff">[ ${res.predicted_position_7d_km[0].toFixed(2)}, ${res.predicted_position_7d_km[1].toFixed(2)}, ${res.predicted_position_7d_km[2].toFixed(2)} ]</span>
+                        </div>
+                    `;
+                } else {
+                    const err = await response.json();
+                    consoleEl.innerHTML = `<div style="color: var(--color-critical)">[ERROR] Forecast failed: ${err.detail || 'unknown error'}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                consoleEl.innerHTML = `<div style="color: var(--color-critical)">[ERROR] Net error: ${e.message}</div>`;
             }
         }
 

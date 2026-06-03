@@ -787,6 +787,33 @@ def federated_aggregate():
         raise HTTPException(status_code=400, detail="Not enough submissions to aggregate (minimum 2).")
     return {"status": "success", "message": "Aggregation complete.", "global_weights": global_weights}
 
+@app.post("/federated/generate-simulation-payload")
+def generate_simulation_payload(operator_id: str, sample_count: int = 100):
+    secrets = {
+        "operator_spacex": b"spacex_secret_handshake_key_101",
+        "operator_oneweb": b"oneweb_secret_handshake_key_202",
+        "operator_isro": b"isro_secret_handshake_key_303"
+    }
+    if operator_id not in secrets:
+        raise HTTPException(status_code=404, detail=f"Operator {operator_id} not registered.")
+    
+    import random
+    # Generate mock weights layers representation
+    weights = [[random.uniform(-0.5, 0.5) for _ in range(10)] for _ in range(3)]
+    
+    import hashlib
+    import hmac
+    weights_str = str(weights)
+    payload_hash = hashlib.sha256(weights_str.encode()).hexdigest()
+    signature = hmac.new(secrets[operator_id], payload_hash.encode(), hashlib.sha256).hexdigest()
+    
+    return {
+        "operator_id": operator_id,
+        "weights": weights,
+        "sample_count": sample_count,
+        "signature": signature
+    }
+
 @app.post("/anomaly/check/{norad_id}")
 def check_anomaly(norad_id: str):
     try:
@@ -882,7 +909,26 @@ def live_tles():
     from live_feed import get_cached_conjunctions
     data = get_cached_conjunctions()
     catalog = {}
+    
+    # Standard conjunctions
     for c in data.get("conjunctions", []):
+        p = c["primary"]
+        s = c["secondary"]
+        catalog[p["norad_id"]] = {
+            "name": p["name"],
+            "line1": p["line1"],
+            "line2": p["line2"],
+            "type": "active"
+        }
+        catalog[s["norad_id"]] = {
+            "name": s["name"],
+            "line1": s["line1"],
+            "line2": s["line2"],
+            "type": "debris"
+        }
+        
+    # Fleet close approaches
+    for c in data.get("fleet_conjunctions", []):
         p = c["primary"]
         s = c["secondary"]
         catalog[p["norad_id"]] = {

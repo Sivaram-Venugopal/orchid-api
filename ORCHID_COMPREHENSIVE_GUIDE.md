@@ -1,5 +1,5 @@
 # ORCHID: Operational Space Traffic Management & Avoidance Service
-## Comprehensive System Guide & Achievements (v3.0.0)
+## Comprehensive System Guide & Achievements (v4.0.0)
 
 ORCHID is an operational-grade autonomous space traffic management (STM) service. It is designed to replace slow, manual collision-avoidance checks with a lightning-fast, high-fidelity microservice. It handles everything from raw TLE ingestion to Unscented Kalman Filtering, non-spherical 3D structure projection, relative rendezvous targeting, and Reinforcement Learning maneuver generation.
 
@@ -242,6 +242,40 @@ In the latest update (Phase 6), ORCHID was extended from an on-demand REST analy
 
 ---
 
+## 10. Phase 8: Machine Learning & Trajectory Forecasting Enhancements
+
+Phase 8 introduces advanced statistical and machine learning capabilities to forecast satellite state dynamics, detect unannounced maneuvers, and train regime-specific avoidance maneuvers.
+
+### A. Regime-Specific Reinforcement Learning Policies
+ORCHID uses Proximal Policy Optimization (PPO) policies optimized for the physical constraints of distinct orbital zones:
+1. **LEO Impulsive Policy**: Trains on discrete, high-thrust delta-V impulse bounds simulating chemical propulsion maneuvers.
+2. **GEO Continuous Electric Policy**: Trains on low-thrust, continuous delta-V directions over long horizons simulating electric ion engine systems.
+
+### B. Trajectory Anomaly & Drift Detector
+Detects unannounced maneuvers and sensor discrepancies:
+* **Spatial Drift Verification**: Propagates both old (cached) and new TLEs using high-performance SGP4 propagation to the current epoch. If their Euclidean separation exceeds a threshold (default 5.0 km), the system flags an orbital drift anomaly and dispatches an automated alert.
+* **UKF Residual Validation**: Monitors Unscented Kalman Filter residuals against diagonal covariance uncertainties. If residuals exceed 3 times the standard deviation bounds, the system flags a sensor anomaly.
+
+### C. 7-Day Orbit Trajectory Forecasting
+Provides early warning coordinates prior to catalog updates:
+* **LSTM Neural Network**: Implements a PyTorch Long Short-Term Memory (LSTM) network trained to map a 5-day history sequence of spatial ECI coordinates into a forecast of the position 7 days in advance.
+* **Keplerian Analytical Fallback**: In the absence of trained network weights, the system propagates states analytically based on the satellite's mean motion ($n$), simulating a circular Keplerian orbit drift projection.
+
+### D. HMAC-Signed Federated Learning Coordinator
+Enables multi-operator collaborative model training without coordinate leakage:
+* **HMAC Signature Authentication**: Submissions must contain a SHA-256 hash of the weights matrix signed using the operator's secret handshake key (e.g. SpaceX, OneWeb, ISRO) via HMAC-SHA256.
+* **Federated Averaging (FedAvg)**: Aggregates queued operator updates dynamically, scaling local weights by their local sample counts to output a secure, globally updated policy:
+  $$W_{\text{global}} = \sum_{i} \left( \frac{\text{samples}_i}{\text{total\_samples}} \cdot W_i \right)$$
+
+### E. Interactive Operations UI Deck
+Integrates directly into the Fleet Operations dashboard:
+* **Secured Federated Learning Simulator**: Allows manual simulation of operator weight submissions, HMAC signing, queue status tracking, and triggering global FedAvg aggregations.
+* **Integrity Drift Check**: Triggerable checks to verify the spatial deviation of any fleet satellite.
+* **7-Day LSTM Path Forecast**: Computes and prints current vs. forecasted coordinates and the prediction method.
+
+---
+
 ### File Location
 * **Workspace copy**: `C:/Users/LAKSHMI/orchid-api/ORCHID_COMPREHENSIVE_GUIDE.md`
 * **System Artifact**: `C:/Users/LAKSHMI/.gemini/antigravity-cli/brain/45f81805-8fbd-4bcc-ac15-d27cd650722f/orchid_comprehensive_guide.md`
+
