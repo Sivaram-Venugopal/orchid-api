@@ -759,6 +759,113 @@ def compute_rendezvous(request: RendezvousRequest):
         logger.error(f"Rendezvous calculation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+from federated_learning import FederatedCoordinator
+fed_coordinator = FederatedCoordinator()
+
+class FederatedSubmission(BaseModel):
+    operator_id: str
+    weights: List[List[float]]
+    sample_count: int
+    signature: str
+
+@app.post("/federated/submit")
+def federated_submit(submission: FederatedSubmission):
+    res = fed_coordinator.submit_local_weights(
+        submission.operator_id,
+        submission.weights,
+        submission.sample_count,
+        submission.signature
+    )
+    if res["status"] == "failed":
+        raise HTTPException(status_code=401, detail=res["message"])
+    return res
+
+@app.post("/federated/aggregate")
+def federated_aggregate():
+    global_weights = fed_coordinator.aggregate_weights()
+    if not global_weights:
+        raise HTTPException(status_code=400, detail="Not enough submissions to aggregate (minimum 2).")
+    return {"status": "success", "message": "Aggregation complete.", "global_weights": global_weights}
+
+@app.post("/anomaly/check/{norad_id}")
+def check_anomaly(norad_id: str):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, tle1, tle2 FROM fleet_satellites WHERE norad_id = ?", (norad_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Satellite {norad_id} is not registered in our operational fleet.")
+            
+        sat_name, old_tle1, old_tle2 = row[0], row[1], row[2]
+        
+        from catalog_manager import load_tle_catalog
+        catalog = load_tle_catalog(force_refresh=True)
+        
+        if norad_id not in catalog:
+            raise HTTPException(status_code=404, detail=f"Latest TLE for NORAD ID {norad_id} not available in catalog.")
+            
+        new_sat = catalog[norad_id]
+        
+        from anomaly_detector import detect_tle_drift
+        res = detect_tle_drift(
+            norad_id, sat_name, old_tle1, old_tle2, new_sat["line1"], new_sat["line2"]
+        )
+        return res
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Anomaly check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict/7d/{norad_id}")
+def predict_7d(norad_id: str):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT tle1, tle2 FROM fleet_satellites WHERE norad_id = ?", (norad_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            from catalog_manager import load_tle_catalog
+            catalog = load_tle_catalog()
+            if norad_id not in catalog:
+                raise HTTPException(status_code=404, detail=f"Satellite {norad_id} TLE not found.")
+            tle1, tle2 = catalog[norad_id]["line1"], catalog[norad_id]["line2"]
+        else:
+            tle1, tle2 = row[0], row[1]
+            
+        from physics import tle_to_state
+        state = tle_to_state(tle1, tle2)
+        pos = state[:3]
+        
+        sequence = []
+        for i in range(5):
+            t_offset = i * 86400.0
+            theta = 0.0011 * t_offset
+            c, s = np.cos(theta), np.sin(theta)
+            sequence.append([
+                float(pos[0]*c - pos[1]*s),
+                float(pos[0]*s + pos[1]*c),
+                float(pos[2])
+            ])
+            
+        from lstm_predictor import predict_7d_position
+        pred = predict_7d_position(sequence)
+        
+        return {
+            "satellite_id": norad_id,
+            "current_position_km": pos,
+            "predicted_position_7d_km": pred.tolist(),
+            "method": "LSTM_Predictor" if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lstm_orbit_model.pt")) else "Keplerian_Analytical_Fallback"
+        }
+    except Exception as e:
+        logger.error(f"7-day prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
