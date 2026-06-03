@@ -6,7 +6,7 @@ import asyncio
 import sqlite3
 import struct
 import io
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -892,6 +892,107 @@ def predict_7d(norad_id: str):
     except Exception as e:
         logger.error(f"7-day prediction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class OEMExportRequest(BaseModel):
+    satellite_name: str
+    norad_id: str
+    tle1: str
+    tle2: str
+    delta_v_rtn: List[float]
+    minutes_until_burn: float
+    time_horizon_hrs: Optional[float] = 24.0
+
+@app.post("/import/cdm", response_model=OrchidResponse)
+async def import_cdm(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        cdm_text = contents.decode("utf-8")
+        
+        from cdm_parser import parse_cdm_kvn
+        request_payload = parse_cdm_kvn(cdm_text)
+        
+        req = ManeuverRequest(**request_payload)
+        return analyze(req)
+    except Exception as e:
+        logger.error(f"Failed to import and analyze CCSDS CDM: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse and process Conjunction Data Message: {str(e)}")
+
+@app.post("/export/oem")
+def export_oem(req: OEMExportRequest):
+    try:
+        from oem_exporter import generate_oem_text
+        oem_text = generate_oem_text(
+            req.satellite_name, req.norad_id, req.tle1, req.tle2,
+            req.delta_v_rtn, req.minutes_until_burn, req.time_horizon_hrs or 24.0
+        )
+        stream = io.BytesIO(oem_text.encode("utf-8"))
+        return StreamingResponse(
+            stream,
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename=ORCHID_OEM_{req.norad_id}.txt"}
+        )
+    except Exception as e:
+        logger.error(f"OEM export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate OEM: {str(e)}")
+
+@app.get("/export/oem/{task_id}")
+def export_oem_by_task(task_id: str):
+    if task_id not in jobs:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    job = jobs[task_id]
+    if job["status"] != "SUCCESS":
+        raise HTTPException(status_code=400, detail=f"Task is in status {job['status']}, cannot export trajectory yet.")
+        
+    result = job["result"]
+    sat_id = result["satellite_id"]
+    
+    tle1, tle2 = None, None
+    sat_name = f"NORAD {sat_id}"
+    
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, tle1, tle2 FROM fleet_satellites WHERE norad_id = ?", (sat_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            sat_name, tle1, tle2 = row[0], row[1], row[2]
+    except Exception:
+        pass
+        
+    if not tle1 or not tle2:
+        try:
+            from spacetrack_client import SpaceTrackClient
+            client = SpaceTrackClient()
+            res = client.fetch_tle(sat_id)
+            if res:
+                sat_name, tle1, tle2 = res["name"], res["line1"], res["line2"]
+        except Exception:
+            pass
+            
+    if not tle1 or not tle2:
+        raise HTTPException(status_code=404, detail="Failed to resolve TLE coordinates for the satellite in this task.")
+        
+    maneuver = result.get("maneuver")
+    if not maneuver or not result.get("maneuver_required"):
+        raise HTTPException(status_code=400, detail="No evasive maneuver was required or planned for this task.")
+        
+    try:
+        from oem_exporter import generate_oem_text
+        oem_text = generate_oem_text(
+            sat_name, sat_id, tle1, tle2,
+            maneuver["delta_v_rtn"], maneuver["burn_lead_time_min"], 24.0
+        )
+        stream = io.BytesIO(oem_text.encode("utf-8"))
+        return StreamingResponse(
+            stream,
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename=ORCHID_OEM_{sat_id}_task.txt"}
+        )
+    except Exception as e:
+        logger.error(f"OEM export failed for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate OEM: {str(e)}")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")

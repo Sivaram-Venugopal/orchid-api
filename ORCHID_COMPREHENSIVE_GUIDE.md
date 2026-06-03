@@ -1,5 +1,5 @@
 # ORCHID: Operational Space Traffic Management & Avoidance Service
-## Comprehensive System Guide & Achievements (v4.0.0)
+## Comprehensive System Guide & Achievements (v5.0.0)
 
 ORCHID is an operational-grade autonomous space traffic management (STM) service. It is designed to replace slow, manual collision-avoidance checks with a lightning-fast, high-fidelity microservice. It handles everything from raw TLE ingestion to Unscented Kalman Filtering, non-spherical 3D structure projection, relative rendezvous targeting, and Reinforcement Learning maneuver generation.
 
@@ -275,7 +275,31 @@ Integrates directly into the Fleet Operations dashboard:
 
 ---
 
+## 11. Phase 9: Space Agency & Catalog Integrations
+
+Phase 9 integrates ORCHID with official space agency tracking catalogs (JSpOC Space-Track, ESA DISCOS) and implements standardized CCSDS data exchange message protocols (CDM and OEM).
+
+### A. JSpOC Space-Track API Client
+* **Authenticated Catalog Queries**: Implements a dedicated client `SpaceTrackClient` that uses JSpOC REST query protocols to dynamically download verified TLE sets.
+* **CelesTrak Fallback**: If `SPACETRACK_IDENTITY` and `SPACETRACK_PASSWORD` are not configured in environmental variables, the client gracefully falls back to CelesTrak's public API without interrupting execution.
+
+### B. ESA DISCOS Structural Characteristics
+* **Real-time Spacecraft Profiling**: Implements `DiscosClient` querying the European Space Agency's Database and Information System Characterising Objects in Space.
+* **Dynamic Mesh Checking**: Resolves satellite structural parameters (length, width, height, dry mass, solar array spans) dynamically rather than relying on hardcoded presets. This info is passed into the 3D projected CAD mesh check to calculate a geometrically realistic collision probability.
+
+### C. Standardized CCSDS Message Formats
+* **CDM Parser (CCSDS 508.0-B-1)**: Parses XML/KVN Conjunction Data Messages (CDMs) containing relative covariances and approach geometry. Translates standard fields like `COLLISION_THRESHOLD` (HBR), covariance elements `CR_R`, `CT_T`, `CN_N`, and TLE lines directly into ORCHID inputs.
+* **OEM Ephemeris Exporter (CCSDS 502.0-B-2)**: Exports planned pre-burn and post-burn safe avoidance paths as compliant Orbit Ephemeris Messages (OEMs) in Key-Value Notation (KVN) at 60-second intervals. Position is exported in kilometers and velocity in km/s.
+
+### D. Interoperability API Endpoints
+* `POST /import/cdm`: Imports a raw KVN Conjunction Data Message file, executes the risk assessment and reinforcement learning maneuver generation, and returns a full avoidance burn plan response.
+* `POST /export/oem`: Accepts a satellite configuration and a planned delta-V vector, propagates the safe trajectory, and returns a downloadable CCSDS-compliant OEM ephemeris text file.
+* `GET /export/oem/{task_id}`: Resolves the computed state details for a success background task and generates a downloadable CCSDS OEM trajectory file directly.
+
+---
+
 ### File Location
 * **Workspace copy**: `C:/Users/LAKSHMI/orchid-api/ORCHID_COMPREHENSIVE_GUIDE.md`
 * **System Artifact**: `C:/Users/LAKSHMI/.gemini/antigravity-cli/brain/45f81805-8fbd-4bcc-ac15-d27cd650722f/orchid_comprehensive_guide.md`
+
 

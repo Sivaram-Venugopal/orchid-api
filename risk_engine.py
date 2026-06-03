@@ -150,7 +150,7 @@ def calculate_collision_probability(sat_pos, sat_vel, sat_cov_rtn, deb_pos, deb_
     prob = min(1.0, max(0.0, float(pc_approx)))
     return prob, C_2D, R_sat, P
 
-def calculate_mesh_probability(C_2D, d, R_sat, P):
+def calculate_mesh_probability(C_2D, d, R_sat, P, dims=None):
     """
     Computes collision probability using a 3D Oriented Bounding Box (OBB) & Solar Arrays
     projected onto the 2D b-plane, rather than a spherical HBR approximation.
@@ -164,13 +164,22 @@ def calculate_mesh_probability(C_2D, d, R_sat, P):
         
     C_2D_inv = np.linalg.inv(C_2D)
     
+    if dims is None:
+        dims = {
+            "bus_dimensions": [3.0, 2.0, 2.0],
+            "panel_dimensions": [1.0, 5.0]
+        }
+    
+    bus_len, bus_w, bus_h = dims.get("bus_dimensions", [3.0, 2.0, 2.0])
+    p_w, p_span = dims.get("panel_dimensions", [1.0, 5.0])
+    
     # Define satellite body geometry boxes (Bus + 2 Solar Arrays) in Local Body Frame
-    bus_min = np.array([-1.5, -1.0, -1.0])
-    bus_max = np.array([1.5, 1.0, 1.0])
-    p1_min = np.array([-0.1, -1.0, 1.0])
-    p1_max = np.array([0.1, 1.0, 6.0])
-    p2_min = np.array([-0.1, -1.0, -6.0])
-    p2_max = np.array([0.1, 1.0, -1.0])
+    bus_min = np.array([-bus_len / 2.0, -bus_w / 2.0, -bus_h / 2.0])
+    bus_max = np.array([bus_len / 2.0, bus_w / 2.0, bus_h / 2.0])
+    p1_min = np.array([-0.1, -p_w, bus_h / 2.0])
+    p1_max = np.array([0.1, p_w, bus_h / 2.0 + p_span])
+    p2_min = np.array([-0.1, -p_w, -bus_h / 2.0 - p_span])
+    p2_max = np.array([0.1, p_w, -bus_h / 2.0])
     
     def get_projected_box_hull(box_min, box_max, R_sat_mat, P_mat):
         vertices = []
@@ -247,7 +256,7 @@ def calculate_mesh_probability(C_2D, d, R_sat, P):
     
     return min(1.0, max(0.0, float(prob_mesh)))
 
-def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr):
+def process_single_debris(debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr, dims=None):
     from physics import propagate_rk4_trajectory
     import math
     from sgp4.api import jday
@@ -348,7 +357,7 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
             hbr
         )
         cov_list = C_2D.tolist()
-        prob_mesh = calculate_mesh_probability(C_2D, distance_km * 1000.0, R_sat, P)
+        prob_mesh = calculate_mesh_probability(C_2D, distance_km * 1000.0, R_sat, P, dims=dims)
     else:
         prob = 0.0
         prob_mesh = 0.0
@@ -373,6 +382,17 @@ def process_single_debris(debris, sat_states_by_offset, start_time, total_second
 
 def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None, deb_cov_rtn=None, hbr=20.0, progress_callback=None):
     sat_id, sat_tle1, sat_tle2 = get_tle_fields(satellite)
+    
+    # Load dynamic dimensions from ESA DISCOS client
+    try:
+        from discos_client import DiscosClient
+        discos = DiscosClient()
+        dims = discos.fetch_satellite_dimensions(sat_id)
+    except Exception:
+        dims = {
+            "bus_dimensions": [3.0, 2.0, 2.0],
+            "panel_dimensions": [1.0, 5.0]
+        }
     sat_rec = Satrec.twoline2rv(sat_tle1, sat_tle2)
     
     # Extract orbital elements for primary satellite
@@ -427,7 +447,7 @@ def assess_risk(satellite, debris_list, time_horizon_hrs=24.0, sat_cov_rtn=None,
         futures = {
             executor.submit(
                 process_single_debris,
-                debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr
+                debris, sat_states_by_offset, start_time, total_seconds, sat_cov_rtn, deb_cov_rtn, hbr, dims
             ): debris
             for debris in filtered_debris_list
         }

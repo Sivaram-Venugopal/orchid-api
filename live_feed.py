@@ -181,19 +181,14 @@ def fetch_live_conjunctions_data():
         logger.error(f"Failed to write live_conjunctions cache: {e}")
 
 def fetch_tle_for_id(norad_id):
-    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=tle"
     try:
-        r = requests.get(url, timeout=12)
-        if r.status_code == 200:
-            lines = [line.strip() for line in r.text.splitlines() if line.strip()]
-            if len(lines) >= 3:
-                return {
-                    "name": lines[0],
-                    "line1": lines[1],
-                    "line2": lines[2]
-                }
+        from spacetrack_client import SpaceTrackClient
+        client = SpaceTrackClient()
+        res = client.fetch_tle(norad_id)
+        if res:
+            return res
     except Exception as e:
-        logger.error(f"Failed to fetch TLE for NORAD ID {norad_id}: {e}")
+        logger.error(f"Failed to fetch TLE via SpaceTrackClient for NORAD ID {norad_id}: {e}")
     return None
 
 def get_cached_conjunctions():
