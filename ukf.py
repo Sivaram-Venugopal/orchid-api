@@ -116,6 +116,17 @@ def measurement_model(state, sensor_type="cartesian", sensor_location=None):
         dec = math.asin(rz / r)
         return np.array([ra, dec])
         
+    elif sensor_type == "doppler":
+        if r < 1e-3:
+            return np.array([0.0])
+        if sensor_location is not None and len(sensor_location) >= 6:
+            v_station = np.array(sensor_location[3:6])
+        else:
+            v_station = np.zeros(3)
+        v_rel = state[3:6] - v_station
+        range_rate = np.dot(r_rel, v_rel) / r
+        return np.array([range_rate])
+        
     else:
         return pos.copy()
 

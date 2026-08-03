@@ -110,12 +110,24 @@ def fetch_live_conjunctions_data():
             logger.info(f"Screening fleet against {len(debris_pool)} debris objects...")
             
             for idx, sat in enumerate(fleet_sats):
+                # Retrieve active covariance if it exists in UKF tracking pool
+                sat_cov = None
+                try:
+                    from main import active_ukf_filters
+                    import numpy as np
+                    if sat["norad_id"] in active_ukf_filters:
+                        # Extract the 3x3 position covariance part of the 6x6 UKF covariance matrix
+                        sat_cov = active_ukf_filters[sat["norad_id"]]["covariance"][:3, :3]
+                        logger.info(f"Using corrected UKF covariance for {sat['name']} ({sat['norad_id']}) in risk screening.")
+                except Exception as e:
+                    pass
+
                 # Execute 3-stage screening for the fleet satellite
                 # Run over 120 hours (5 days)
                 primary_input = {"norad_id": sat["norad_id"], "tle1": sat["tle1"], "tle2": sat["tle2"]}
                 assessments = assess_risk(
                     primary_input, debris_pool, time_horizon_hrs=120.0,
-                    sat_cov_rtn=None, deb_cov_rtn=None, hbr=20.0
+                    sat_cov_rtn=sat_cov, deb_cov_rtn=None, hbr=20.0
                 )
                 
                 # Filter down to close passes (under 15.0 km) to prevent bloating the cache file

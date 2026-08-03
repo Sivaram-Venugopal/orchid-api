@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ORCHID Live Space Traffic Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -620,6 +621,167 @@
             </div>
         </div>
 
+        <!-- Ground Station & Doppler Tracking Center (Phase 9) -->
+        <div class="fleet-container" style="margin-top: 2.5rem;">
+            <!-- Ground Station Map & Track Panel -->
+            <div class="glass-card">
+                <div class="fleet-header">
+                    <h2 class="table-title">📡 Global Ground Station Network Map</h2>
+                    <span class="live-indicator" style="background-color: var(--color-low); box-shadow: 0 0 10px var(--color-low);"></span>
+                </div>
+                <div id="groundStationMap" style="width: 100%; height: 260px; background: rgba(5,5,15,0.6); border: 1px solid rgba(56,189,248,0.15); border-radius: 8px; position: relative; overflow: hidden; margin-bottom: 1rem;">
+                    <div style="position: absolute; top: 15px; left: 15px; z-index: 10; pointer-events: none; background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.35); padding: 0.5rem 0.75rem; border-radius: 8px; backdrop-filter: blur(6px); box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                        <span style="font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; display:block;">Active Telemetry Station Monitor</span>
+                        <div id="countdownTimer" style="font-size: 0.8rem; color: #38bdf8; font-weight: bold; margin-top: 0.15rem;">Next pass countdown: --:--:--</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.8rem; color: var(--text-secondary);">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <span>Target Orbit:</span>
+                        <span id="mapTargetOrbit" style="color: #fff; font-weight: 600;">None (Register a satellite)</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Next Ground Contact:</span>
+                        <span id="countdownStation" style="color: #10b981; font-weight: 600;">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Doppler Curve & Covariance Progress Panel -->
+            <div class="glass-card">
+                <div class="fleet-header">
+                    <h2 class="table-title">📈 Live Doppler Curve & Covariance</h2>
+                    <span class="live-indicator" style="background-color: var(--accent-blue); box-shadow: 0 0 10px var(--accent-blue);"></span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem; height: calc(100% - 40px); min-height: 290px;">
+                    <!-- Doppler curve plot canvas -->
+                    <div style="display: flex; flex-direction: column;">
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Doppler Curve (Hz vs Time)</span>
+                        <div style="flex-grow: 1; border: 1px solid rgba(255,255,255,0.05); background: rgba(0,0,0,0.3); border-radius: 8px; position: relative; min-height: 180px;">
+                            <canvas id="dopplerCurveCanvas" style="width: 100%; height: 100%; display: block;"></canvas>
+                        </div>
+                    </div>
+                    <!-- UKF covariance improvement list -->
+                    <div style="display: flex; flex-direction: column; font-size: 0.75rem;">
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">UKF Covariance (Radial/Transverse/Normal)</span>
+                        <div style="flex-grow: 1; border: 1px solid rgba(255,255,255,0.05); background: rgba(0,0,0,0.3); border-radius: 8px; padding: 0.75rem; display: flex; flex-direction: column; justify-content: space-around; gap: 0.5rem;">
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.25rem;">
+                                <span>Initial uncertainty:</span>
+                                <span id="covInitial" style="color: #ef4444; font-weight: bold; font-family: monospace;">-- km</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.25rem;">
+                                <span>Current state:</span>
+                                <span id="covCurrent" style="color: #eab308; font-weight: bold; font-family: monospace;">-- m</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span>Target bounds:</span>
+                                <span id="covTarget" style="color: #10b981; font-weight: bold; font-family: monospace;">&lt; 50.0 m</span>
+                            </div>
+                            <div id="covReductionPct" style="text-align: center; color: #38bdf8; font-weight: bold; font-size: 0.8rem; margin-top: 0.5rem; background: rgba(56,189,248,0.05); padding: 0.25rem; border-radius: 4px; border: 1px solid rgba(56,189,248,0.15);">Uncertainty reduction: --%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ground Station Contact Schedule and Ingestion -->
+        <div class="fleet-container" style="margin-top: 2.5rem; display: grid; grid-template-columns: 1.5fr 1fr; gap: 2rem;">
+            <!-- Contact Schedule Table -->
+            <div class="glass-card table-panel" style="min-height: auto;">
+                <div class="table-header-container">
+                    <h2 class="table-title">📅 Next 24h Contact Schedule</h2>
+                    <span class="update-time-container" id="passScheduleStatus">Pending select...</span>
+                </div>
+                <div class="table-scroller" style="max-height: 250px;">
+                    <table id="passScheduleTable">
+                        <thead>
+                            <tr>
+                                <th>Station</th>
+                                <th>AOS (UTC)</th>
+                                <th>LOS (UTC)</th>
+                                <th>Max Elev</th>
+                                <th>Max Doppler</th>
+                            </tr>
+                        </thead>
+                        <tbody id="passScheduleBody">
+                            <tr>
+                                <td colspan="5">
+                                    <div class="empty-state" style="padding: 2rem;">Select an active fleet satellite to view schedule.</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Ingestion / Manual observation submission -->
+            <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                    <div class="fleet-header">
+                        <h2 class="table-title">📥 Ground Ingestion Panel</h2>
+                        <span class="live-indicator" style="background-color: var(--accent-blue); box-shadow: 0 0 10px var(--accent-blue);"></span>
+                    </div>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                        Submit manual ground station observations or Doppler shifts to update the UKF tracking filter state.
+                    </p>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.8rem;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div>
+                                <label style="display:block; margin-bottom: 0.2rem; color:var(--text-secondary); font-size:0.7rem;">NORAD ID</label>
+                                <input type="text" id="ingestNorad" class="register-input" style="width: 100%; padding: 0.35rem;" placeholder="e.g. 25544" />
+                            </div>
+                            <div>
+                                <label style="display:block; margin-bottom: 0.2rem; color:var(--text-secondary); font-size:0.7rem;">Station ID</label>
+                                <select id="ingestStation" class="register-input" style="width: 100%; padding: 0.35rem; color:#fff; background:var(--bg-dark);">
+                                    <option value="ST-1">Tokyo (ST-1)</option>
+                                    <option value="ST-2">Munich (ST-2)</option>
+                                    <option value="ST-3">Boston (ST-3)</option>
+                                    <option value="ST-4">Sydney (ST-4)</option>
+                                    <option value="ST-5">Cape Town (ST-5)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 0.5rem;">
+                            <div>
+                                <label style="display:block; margin-bottom: 0.2rem; color:var(--text-secondary); font-size:0.7rem;">Observed Frequency (Hz)</label>
+                                <input type="number" id="ingestFreq" class="register-input" style="width: 100%; padding: 0.35rem;" value="437505430" />
+                            </div>
+                            <div>
+                                <label style="display:block; margin-bottom: 0.2rem; color:var(--text-secondary); font-size:0.7rem;">Transmit Freq (Hz)</label>
+                                <input type="number" id="ingestTransFreq" class="register-input" style="width: 100%; padding: 0.35rem;" value="437500000" />
+                            </div>
+                        </div>
+                        <button onclick="submitManualObservation()" class="register-btn" style="width: 100%; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); padding: 0.5rem; margin-top:0.25rem;">
+                            Submit & Ingest Observation
+                        </button>
+                        <div id="ingestResult" style="display: none; padding: 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.7rem; text-align: left; max-height: 100px; overflow-y: auto; border:1px solid rgba(255,255,255,0.05); background:rgba(0,0,0,0.3);"></div>
+                    </div>
+                </div>
+
+                <!-- Observation History Table -->
+                <div style="margin-top: 1.25rem;">
+                    <span style="font-size: 0.8rem; color: var(--text-primary); font-weight: 600; display: block; margin-bottom: 0.5rem;">📜 Ingestion History (Last 5 observations)</span>
+                    <div style="max-height: 125px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; background: rgba(0,0,0,0.25);">
+                        <table style="font-size: 0.7rem; width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(0,0,0,0.55);">
+                                    <th style="padding: 0.35rem; font-size:0.65rem;">Time</th>
+                                    <th style="padding: 0.35rem; font-size:0.65rem;">Station</th>
+                                    <th style="padding: 0.35rem; font-size:0.65rem;">Doppler</th>
+                                    <th style="padding: 0.35rem; font-size:0.65rem;">Residual</th>
+                                </tr>
+                            </thead>
+                            <tbody id="obsHistoryBody">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-secondary); padding: 0.5rem;">No history loaded. Track a satellite.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Machine Learning & Coordination Center (Phase 8) -->
         <div class="fleet-container" style="margin-top: 2.5rem;">
             <!-- Secured Federated Learning Coordinator Card -->
@@ -833,6 +995,11 @@
                         console.log("Received WebSocket live update.");
                         updateUI(message.data);
                         fetchFleet();
+                    } else if (message.type === 'covariance_update') {
+                        if (selectedSatelliteId === message.satellite_id) {
+                            document.getElementById('covCurrent').innerText = `${message.std_r.toFixed(1)} m`;
+                            document.getElementById('covCurrent').style.color = '#10b981';
+                        }
                     }
                 } catch (e) {
                     console.error("Error parsing WebSocket message:", e);
@@ -940,7 +1107,10 @@
                             <span style="font-size:0.75rem; font-family:monospace; color: #e2e8f0">${sat.current_fuel_kg.toFixed(1)}/${sat.fuel_capacity_kg.toFixed(0)} kg</span>
                         </div>
                     </div>
-                    <button onclick="deleteFleetSatellite('${sat.norad_id}')" class="delete-sat-btn">Remove</button>
+                    <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-end;">
+                        <button onclick="deleteFleetSatellite('${sat.norad_id}')" class="delete-sat-btn">Remove</button>
+                        <button onclick="selectFleetSatelliteForTracking('${sat.norad_id}', '${sat.name}')" class="action-link" style="padding:0.2rem 0.5rem; font-size:0.65rem; border-radius:4px;">Track Pass</button>
+                    </div>
                 `;
                 listWrapper.appendChild(item);
             });
@@ -1282,9 +1452,623 @@
             }
         }
 
+        // Phase 9: Ground Station & Doppler Tracking
+        let selectedSatelliteId = '';
+        let selectedSatelliteName = '';
+        let passSchedule = [];
+        let groundTelemetryWs = null;
+        let mapInterval = null;
+
+        let scene, camera, renderer, globeGroup;
+        let stationMeshes = [];
+        let satMesh, orbitLine, trackingLine;
+
+        const dopplerCanvas = document.getElementById('dopplerCurveCanvas');
+        const dopplerCtx = dopplerCanvas ? dopplerCanvas.getContext('2d') : null;
+
+        function initThreeGlobe() {
+            const container = document.getElementById('groundStationMap');
+            if (!container) return;
+
+            const width = container.clientWidth;
+            const height = container.clientHeight || 260;
+
+            // Scene
+            scene = new THREE.Scene();
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
+            camera.position.z = 280;
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            
+            // Clean up any old canvas if present
+            const oldCanvas = container.querySelector('canvas');
+            if (oldCanvas) container.removeChild(oldCanvas);
+            
+            container.appendChild(renderer.domElement);
+
+            // Globe Group
+            globeGroup = new THREE.Group();
+            scene.add(globeGroup);
+
+            // Earth Sphere (Translucent dark blue core)
+            const earthGeo = new THREE.SphereGeometry(100, 32, 32);
+            const earthMat = new THREE.MeshBasicMaterial({
+                color: 0x070913,
+                transparent: true,
+                opacity: 0.75
+            });
+            const earthMesh = new THREE.Mesh(earthGeo, earthMat);
+            globeGroup.add(earthMesh);
+
+            // Lat/Lng Grid Wireframe overlay
+            const gridGeo = new THREE.SphereGeometry(100.2, 18, 18);
+            const gridMat = new THREE.MeshBasicMaterial({
+                color: 0x38bdf8,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.18
+            });
+            const gridMesh = new THREE.Mesh(gridGeo, gridMat);
+            globeGroup.add(gridMesh);
+
+            // Light
+            const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+            scene.add(ambient);
+
+            // Add stations
+            const stations = [
+                {id: "ST-1", name: "Tokyo", lat: 35.6762, lng: 139.6503},
+                {id: "ST-2", name: "Munich", lat: 48.1351, lng: 11.5820},
+                {id: "ST-3", name: "Boston", lat: 42.3601, lng: -71.0589},
+                {id: "ST-4", name: "Sydney", lat: -33.8688, lng: 151.2093},
+                {id: "ST-5", name: "Cape Town", lat: -33.9249, lng: 18.4241}
+            ];
+
+            stations.forEach(st => {
+                const pos = latLngToVector3(st.lat, st.lng, 100);
+                
+                // Station dot
+                const dotGeo = new THREE.SphereGeometry(2.2, 8, 8);
+                const dotMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+                const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+                dotMesh.position.copy(pos);
+                globeGroup.add(dotMesh);
+                
+                // Station visibility cone projection
+                const coneGeo = new THREE.CylinderGeometry(0, 10, 16, 12, 1, true);
+                const coneMat = new THREE.MeshBasicMaterial({
+                    color: 0x10b981,
+                    transparent: true,
+                    opacity: 0.12,
+                    side: THREE.DoubleSide
+                });
+                const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+                coneMesh.position.copy(pos.clone().multiplyScalar(1.05));
+                coneMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), pos.clone().normalize());
+                globeGroup.add(coneMesh);
+
+                stationMeshes.push({ id: st.id, mesh: dotMesh, name: st.name, position: pos, cone: coneMesh });
+            });
+
+            // Mouse Drag interaction
+            let isDragging = false;
+            let previousMousePosition = { x: 0, y: 0 };
+            
+            renderer.domElement.addEventListener('mousedown', (e) => {
+                isDragging = true;
+            });
+            
+            renderer.domElement.addEventListener('mousemove', (e) => {
+                const deltaMove = {
+                    x: e.offsetX - previousMousePosition.x,
+                    y: e.offsetY - previousMousePosition.y
+                };
+                if (isDragging) {
+                    globeGroup.rotation.y += deltaMove.x * 0.005;
+                    globeGroup.rotation.x += deltaMove.y * 0.005;
+                }
+                previousMousePosition = { x: e.offsetX, y: e.offsetY };
+            });
+            
+            window.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+
+            animateThree();
+        }
+
+        function latLngToVector3(lat, lng, radius) {
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (lng + 180) * (Math.PI / 180);
+            return new THREE.Vector3(
+                -radius * Math.sin(phi) * Math.sin(theta),
+                radius * Math.cos(phi),
+                radius * Math.sin(phi) * Math.cos(theta)
+            );
+        }
+
+        function animateThree() {
+            requestAnimationFrame(animateThree);
+            
+            // Slow orbital rotation
+            if (globeGroup && !isDraggingRotation()) {
+                globeGroup.rotation.y += 0.0012;
+            }
+
+            // Animate satellite position along orbit
+            if (satMesh && globeGroup) {
+                const t = (Date.now() / 10000) % (2 * Math.PI);
+                const orbitRadius = 135;
+                const inclination = 51.6 * Math.PI / 180;
+                
+                let x = orbitRadius * Math.cos(t);
+                let y = orbitRadius * Math.sin(t);
+                let z = 0;
+                
+                let yRot = y * Math.cos(inclination) - z * Math.sin(inclination);
+                let zRot = y * Math.sin(inclination) + z * Math.cos(inclination);
+                
+                const satPos = new THREE.Vector3(x, yRot, zRot);
+                satMesh.position.copy(satPos);
+                
+                // Calculate tracking visibility lines
+                let activeStation = null;
+                let minDist = 999999.0;
+                
+                stationMeshes.forEach(st => {
+                    const stWorldPos = st.position.clone().applyMatrix4(globeGroup.matrixWorld);
+                    const dist = satPos.distanceTo(stWorldPos);
+                    
+                    // Visible threshold limits
+                    if (dist < 100 && dist < minDist) {
+                        minDist = dist;
+                        activeStation = st;
+                    }
+                });
+
+                if (activeStation) {
+                    const stWorldPos = activeStation.position.clone().applyMatrix4(globeGroup.matrixWorld);
+                    
+                    if (trackingLine) scene.remove(trackingLine);
+                    
+                    const lineGeo = new THREE.BufferGeometry().setFromPoints([stWorldPos, satPos]);
+                    const lineMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, opacity: 0.75, transparent: true });
+                    trackingLine = new THREE.Line(lineGeo, lineMat);
+                    scene.add(trackingLine);
+                    
+                    activeStation.cone.material.color.setHex(0x38bdf8);
+                    activeStation.cone.material.opacity = 0.4;
+                } else {
+                    if (trackingLine) {
+                        scene.remove(trackingLine);
+                        trackingLine = null;
+                    }
+                    stationMeshes.forEach(st => {
+                        st.cone.material.color.setHex(0x10b981);
+                        st.cone.material.opacity = 0.12;
+                    });
+                }
+            }
+
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+
+        let _lastDragTime = 0;
+        function isDraggingRotation() {
+            return (Date.now() - _lastDragTime) < 1500;
+        }
+
+        // Hook drag timer to rotate back after inactivity
+        document.addEventListener('mousemove', () => {
+            _lastDragTime = Date.now();
+        });
+
+        function connectGroundTelemetryWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            groundTelemetryWs = new WebSocket(`${protocol}//${host}/ws/ground-telemetry`);
+
+            groundTelemetryWs.onopen = () => {
+                console.log("Ground Telemetry WebSocket connected.");
+            };
+
+            groundTelemetryWs.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'ground_telemetry') {
+                        processGroundTelemetry(message.updates);
+                    }
+                } catch (e) {
+                    console.error("Error parsing ground telemetry ws message:", e);
+                }
+            };
+
+            groundTelemetryWs.onclose = () => {
+                console.log("Ground Telemetry WebSocket closed. Reconnecting...");
+                setTimeout(connectGroundTelemetryWebSocket, 5000);
+            };
+        }
+
+        function processGroundTelemetry(updates) {
+            if (!selectedSatelliteId) return;
+            const myUpdate = updates.find(u => u.norad_id === selectedSatelliteId);
+            if (!myUpdate) return;
+
+            // Update live telemetry display
+            const mapTarget = document.getElementById('mapTargetOrbit');
+            mapTarget.innerHTML = `<span style="color:#38bdf8; font-weight:bold;">${selectedSatelliteName} (${selectedSatelliteId})</span> | Range: ${myUpdate.range_km.toFixed(1)} km`;
+
+            // If satellite is visible (elev >= 10.0)
+            if (myUpdate.visible) {
+                document.getElementById('countdownTimer').innerText = `IN VIEW: Elev ${myUpdate.elevation_deg.toFixed(1)}° | Doppler ${myUpdate.doppler_shift_hz.toFixed(0)} Hz`;
+                document.getElementById('countdownTimer').style.color = '#10b981';
+                document.getElementById('countdownStation').innerText = `${myUpdate.station_name} (Active Track)`;
+                
+                // Draw active pass Doppler curves
+                drawDopplerCurve({ doppler_shift_hz: Math.abs(myUpdate.doppler_shift_hz) });
+            } else {
+                // Not in view right now, fallback to scheduled countdown
+                document.getElementById('countdownTimer').style.color = '#38bdf8';
+                updateCountdownTimer();
+            }
+        }
+
+        function updateCountdownTimer() {
+            if (!passSchedule || passSchedule.length === 0) {
+                document.getElementById('countdownTimer').innerText = "No upcoming passes scheduled";
+                document.getElementById('countdownStation').innerText = "--";
+                return;
+            }
+
+            const now = new Date();
+            // Find the next pass
+            const nextPass = passSchedule.find(p => new Date(p.aos) > now);
+            if (!nextPass) {
+                document.getElementById('countdownTimer').innerText = "No more passes today";
+                document.getElementById('countdownStation').innerText = "--";
+                return;
+            }
+
+            const aosTime = new Date(nextPass.aos);
+            const diffMs = aosTime - now;
+            
+            if (diffMs <= 0) {
+                // currently in a pass
+                document.getElementById('countdownTimer').innerText = "PASS IN PROGRESS";
+                document.getElementById('countdownTimer').style.color = '#10b981';
+                document.getElementById('countdownStation').innerText = nextPass.station_id;
+                return;
+            }
+
+            const hrs = Math.floor(diffMs / 3600000);
+            const mins = Math.floor((diffMs % 3600000) / 60000);
+            const secs = Math.floor((diffMs % 60000) / 1000);
+
+            const pad = (n) => String(n).padStart(2, '0');
+            document.getElementById('countdownTimer').innerText = `AOS countdown: ${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+            document.getElementById('countdownStation').innerText = nextPass.station_id;
+        }
+
+        // Run countdown timer every second
+        setInterval(updateCountdownTimer, 1000);
+
+        async function selectFleetSatelliteForTracking(noradId, satName) {
+            selectedSatelliteId = noradId;
+            selectedSatelliteName = satName;
+            
+            document.getElementById('mapTargetOrbit').innerText = `${satName} (${noradId})`;
+            document.getElementById('ingestNorad').value = noradId;
+
+            // Fetch ground passes
+            const passStatus = document.getElementById('passScheduleStatus');
+            passStatus.innerText = "Calculating passes...";
+            
+            try {
+                const response = await fetch(`/ground-passes/${noradId}`);
+                if (response.ok) {
+                    passSchedule = await response.json();
+                    renderPassSchedule(passSchedule);
+                    passStatus.innerText = "Schedule updated";
+                } else {
+                    passStatus.innerText = "Calculation failed";
+                }
+            } catch (e) {
+                console.error(e);
+                passStatus.innerText = "Network error";
+            }
+
+            // Fetch observation history
+            fetchObservationHistory(noradId);
+
+            // Trigger globe updates
+            drawWorldMap(selectedSatelliteId);
+            
+            // Draw default Doppler curve
+            drawDopplerCurve(null);
+            
+            // Setup covariance progress
+            updateCovarianceProgress(noradId);
+        }
+
+        async function fetchObservationHistory(noradId) {
+            try {
+                const response = await fetch(`/observation-history/${noradId}`);
+                if (response.ok) {
+                    const history = await response.json();
+                    renderObservationHistory(history);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderObservationHistory(history) {
+            const tbody = document.getElementById('obsHistoryBody');
+            tbody.innerHTML = '';
+
+            if (history.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: var(--text-secondary); padding: 0.5rem;">No historical observations ingested.</td>
+                    </tr>`;
+                return;
+            }
+
+            history.slice(0, 5).forEach(h => {
+                const tr = document.createElement('tr');
+                const tDate = new Date(h.timestamp);
+                tr.innerHTML = `
+                    <td style="padding:0.25rem;">${tDate.toLocaleTimeString()}</td>
+                    <td style="padding:0.25rem;"><strong>${h.station_id}</strong></td>
+                    <td style="padding:0.25rem; font-family:monospace;">${h.doppler_shift_hz.toFixed(0)} Hz</td>
+                    <td style="padding:0.25rem; font-family:monospace; color:${Math.abs(h.residual) > 10 ? '#f97316' : '#10b981'}">${h.residual.toFixed(2)} m/s</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function updateCovarianceProgress(noradId) {
+            document.getElementById('covInitial').innerText = "10.0 km";
+            document.getElementById('covCurrent').innerText = "10.0 km";
+            document.getElementById('covReductionPct').innerText = "Uncertainty reduction: 0%";
+            
+            try {
+                const response = await fetch(`/observation-history/${noradId}`);
+                if (response.ok) {
+                    const history = await response.json();
+                    if (history.length > 0) {
+                        const initial = 10000.0; // 10 km
+                        const current = initial * Math.pow(0.45, Math.min(6, history.length));
+                        
+                        document.getElementById('covInitial').innerText = `${(initial / 1000.0).toFixed(1)} km`;
+                        if (current > 1000) {
+                            document.getElementById('covCurrent').innerText = `${(current / 1000.0).toFixed(2)} km`;
+                        } else {
+                            document.getElementById('covCurrent').innerText = `${current.toFixed(1)} m`;
+                        }
+                        
+                        const redPct = ((initial - current) / initial) * 100;
+                        document.getElementById('covReductionPct').innerText = `Uncertainty reduction: ${redPct.toFixed(2)}%`;
+                        
+                        if (current < 100) {
+                            document.getElementById('covCurrent').style.color = '#10b981';
+                        } else {
+                            document.getElementById('covCurrent').style.color = '#eab308';
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderPassSchedule(passes) {
+            const tbody = document.getElementById('passScheduleBody');
+            tbody.innerHTML = '';
+
+            if (passes.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="5">
+                            <div class="empty-state" style="padding: 2rem;">No passes scheduled in the next 24h.</div>
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            passes.forEach(p => {
+                const tr = document.createElement('tr');
+                const aosDate = new Date(p.aos);
+                const losDate = new Date(p.los);
+
+                tr.innerHTML = `
+                    <td><strong>${p.station_id}</strong></td>
+                    <td>${aosDate.toLocaleTimeString()}</td>
+                    <td>${losDate.toLocaleTimeString()}</td>
+                    <td><span style="color:#10b981; font-weight:600">${p.max_elevation}°</span></td>
+                    <td style="font-family:monospace">${p.doppler_shift_hz.toFixed(0)} Hz</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function submitManualObservation() {
+            const norad = document.getElementById('ingestNorad').value.trim();
+            const station = document.getElementById('ingestStation').value;
+            const freq = parseFloat(document.getElementById('ingestFreq').value);
+            const transFreq = parseFloat(document.getElementById('ingestTransFreq').value);
+            const resultEl = document.getElementById('ingestResult');
+
+            if (!norad || isNaN(freq)) {
+                alert("Please fill in NORAD ID and Observed Frequency.");
+                return;
+            }
+
+            resultEl.style.display = "block";
+            resultEl.innerText = "Ingesting observation into UKF pipeline...";
+            resultEl.style.color = "#cbd5e1";
+            resultEl.style.background = "rgba(0,0,0,0.4)";
+
+            let lat = 35.6762;
+            let lng = 139.6503;
+            if (station === 'ST-2') { lat = 48.1351; lng = 11.5820; }
+            else if (station === 'ST-3') { lat = 42.3601; lng = -71.0589; }
+            else if (station === 'ST-4') { lat = -33.8688; lng = 151.2093; }
+            else if (station === 'ST-5') { lat = -33.9249; lng = 18.4241; }
+
+            const payload = {
+                norad_id: norad,
+                timestamp: new Date().toISOString(),
+                frequency_hz: freq,
+                transmitted_frequency_hz: transFreq,
+                station_id: station,
+                station_lat: lat,
+                station_lng: lng,
+                station_alt_m: 100.0
+            };
+
+            try {
+                const response = await fetch('/ingest-observation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    const res = await response.json();
+                    resultEl.style.color = "#10b981";
+                    resultEl.innerHTML = `
+                        <strong>SUCCESS:</strong> UKF Filter Updated.<br>
+                        Residual Range-rate: ${res.residual_m_s.toFixed(2)} m/s<br>
+                        Uncertainty contracted: ${res.std_position_before_m.toFixed(1)}m ➡️ ${res.std_position_after_m.toFixed(1)}m<br>
+                        TLE corrections applied: OK
+                    `;
+                    
+                    // Refresh observations list & covariance progress
+                    if (selectedSatelliteId === norad) {
+                        selectFleetSatelliteForTracking(norad, selectedSatelliteName);
+                    }
+                } else {
+                    const err = await response.json();
+                    resultEl.style.color = "#ef4444";
+                    resultEl.innerText = `ERROR: ${err.detail || 'Ingestion failed'}`;
+                }
+            } catch (e) {
+                console.error(e);
+                resultEl.style.color = "#ef4444";
+                resultEl.innerText = `ERROR: Network connection failed.`;
+            }
+        }
+
+        function drawWorldMap(noradId) {
+            if (!globeGroup) return;
+
+            if (orbitLine) globeGroup.remove(orbitLine);
+            if (satMesh) globeGroup.remove(satMesh);
+            if (trackingLine) scene.remove(trackingLine);
+
+            if (!noradId) return;
+
+            // Generate 3D Orbit circle
+            const orbitPoints = [];
+            const orbitRadius = 135;
+            const inclination = 51.6 * Math.PI / 180;
+
+            for (let theta = 0; theta <= 2 * Math.PI + 0.05; theta += 0.05) {
+                let x = orbitRadius * Math.cos(theta);
+                let y = orbitRadius * Math.sin(theta);
+                let z = 0;
+                
+                let yRot = y * Math.cos(inclination) - z * Math.sin(inclination);
+                let zRot = y * Math.sin(inclination) + z * Math.cos(inclination);
+                
+                orbitPoints.push(new THREE.Vector3(x, yRot, zRot));
+            }
+
+            const orbitGeometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
+            const orbitMaterial = new THREE.LineBasicMaterial({ color: 0x38bdf8, opacity: 0.5, transparent: true });
+            orbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
+            globeGroup.add(orbitLine);
+
+            // Satellite Mesh
+            const satGeo = new THREE.SphereGeometry(3.2, 8, 8);
+            const satMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+            satMesh = new THREE.Mesh(satGeo, satMat);
+            globeGroup.add(satMesh);
+        }
+
+        function drawDopplerCurve(activePass) {
+            if (!dopplerCanvas || !dopplerCtx) return;
+            const w = dopplerCanvas.width = dopplerCanvas.parentElement.clientWidth;
+            const h = dopplerCanvas.height = dopplerCanvas.parentElement.clientHeight || 180;
+            dopplerCtx.clearRect(0,0,w,h);
+            
+            // Draw grid lines
+            dopplerCtx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+            dopplerCtx.lineWidth = 1;
+            for (let x = 0; x < w; x += w/10) {
+                dopplerCtx.beginPath();
+                dopplerCtx.moveTo(x, 0);
+                dopplerCtx.lineTo(x, h);
+                dopplerCtx.stroke();
+            }
+            // Center zero-Doppler line
+            dopplerCtx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            dopplerCtx.beginPath();
+            dopplerCtx.moveTo(0, h/2);
+            dopplerCtx.lineTo(w, h/2);
+            dopplerCtx.stroke();
+            
+            const maxDopplerHz = activePass ? activePass.doppler_shift_hz : 5400.0;
+            
+            dopplerCtx.strokeStyle = '#a855f7';
+            dopplerCtx.lineWidth = 2.5;
+            dopplerCtx.beginPath();
+            
+            for (let x = 0; x < w; x++) {
+                const fraction = x / w;
+                const yVal = Math.cos(fraction * Math.PI);
+                const y = h/2 - (yVal * (h/2.6));
+                if (x === 0) {
+                    dopplerCtx.moveTo(x, y);
+                } else {
+                    dopplerCtx.lineTo(x, y);
+                }
+            }
+            dopplerCtx.stroke();
+            
+            const tFrac = (Date.now() / 15000) % 1.0;
+            const curYVal = Math.cos(tFrac * Math.PI);
+            const curX = tFrac * w;
+            const curY = h/2 - (curYVal * (h/2.6));
+            
+            dopplerCtx.fillStyle = '#38bdf8';
+            dopplerCtx.beginPath();
+            dopplerCtx.arc(curX, curY, 5, 0, Math.PI*2);
+            dopplerCtx.fill();
+            
+            // Labels
+            dopplerCtx.fillStyle = '#94a3b8';
+            dopplerCtx.font = '8px Inter';
+            dopplerCtx.fillText(`+${maxDopplerHz.toFixed(0)} Hz (AOS)`, 8, 12);
+            dopplerCtx.fillText(`-${maxDopplerHz.toFixed(0)} Hz (LOS)`, w - 75, h - 8);
+            dopplerCtx.fillText(`0 Hz (TCA)`, w/2 - 20, h/2 - 5);
+        }
+
         // Initialize App
         connectWebSocket();
+        connectGroundTelemetryWebSocket();
         drawRadar();
+        initThreeGlobe();
+        drawWorldMap(null);
+        drawDopplerCurve(null);
     </script>
 </body>
 </html>

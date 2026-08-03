@@ -30,6 +30,7 @@ jobs = {}
 loop = None
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conjunction_history.db")
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -55,9 +56,28 @@ def init_db():
             fuel_capacity_kg REAL,
             current_fuel_kg REAL,
             tle1 TEXT,
-            tle2 TEXT
+            tle2 TEXT,
+            last_observation_time TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ground_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            norad_id TEXT,
+            observation_id TEXT,
+            station_id TEXT,
+            timestamp TEXT,
+            frequency_hz REAL,
+            doppler_shift_hz REAL,
+            range_rate REAL,
+            residual REAL
+        )
+    """)
+    # Try adding last_observation_time in case the table already existed without it
+    try:
+        cursor.execute("ALTER TABLE fleet_satellites ADD COLUMN last_observation_time TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
     # Seed fleet_satellites if empty
@@ -240,6 +260,7 @@ async def startup_event():
     init_db()
     asyncio.create_task(simulated_observation_feed())
     asyncio.create_task(live_dashboard_feed())
+    asyncio.create_task(live_ground_telemetry_feed())
     
     # Start APScheduler background jobs
     from scheduler import start_scheduler
@@ -458,11 +479,14 @@ def run_analysis_background(task_id: str, request: ManeuverRequest):
 
 @app.get("/")
 def root():
+    index = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
     return {
         "service": "ORCHID API",
         "version": "2.0.0",
         "status": "operational",
-        "endpoints": ["/analyze", "/analyze-async", "/tasks/{task_id}", "/risk-only", "/health", "/ui"]
+        "endpoints": ["/analyze", "/analyze-async", "/tasks/{task_id}", "/risk-only", "/health", "/ui", "/dashboard"]
     }
 
 @app.get("/health")
@@ -1045,6 +1069,220 @@ def live_tles():
             "type": "debris"
         }
     return catalog
+
+# --- GROUND STATION & DOPPLER TRACKING PIPELINE INTEGRATION ---
+from satnogs_client import SatNOGSClient
+from doppler_engine import predict_passes_24h
+from tle_corrector import process_observation_and_correct_tle
+from datetime import datetime, timezone
+
+satnogs_client_inst = SatNOGSClient()
+
+@app.get("/ground-stations")
+def get_ground_stations():
+    try:
+        stations = satnogs_client_inst.get_ground_stations()
+        return stations
+    except Exception as e:
+        logger.error(f"Failed to fetch ground stations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ground-passes/{norad_id}")
+def get_ground_passes(norad_id: str):
+    try:
+        # Load TLE from database
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT tle1, tle2 FROM fleet_satellites WHERE norad_id = ?", (norad_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            # Fallback to catalog
+            from catalog_manager import load_tle_catalog
+            catalog = load_tle_catalog()
+            if norad_id not in catalog:
+                raise HTTPException(status_code=404, detail=f"Satellite {norad_id} not found in catalog or fleet.")
+            tle1 = catalog[norad_id]["line1"]
+            tle2 = catalog[norad_id]["line2"]
+        else:
+            tle1, tle2 = row[0], row[1]
+            
+        stations = satnogs_client_inst.get_ground_stations()
+        all_passes = []
+        for station in stations[:5]: # Limit to top 5 stations to keep calculation time fast
+            passes = predict_passes_24h(
+                tle1, tle2,
+                station["lat"], station["lng"], station["alt_m"],
+                station["station_id"]
+            )
+            all_passes.extend(passes)
+            
+        # Sort passes by AOS time
+        all_passes.sort(key=lambda x: x["aos"])
+        return all_passes
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Failed to calculate ground passes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class IngestObservationInput(BaseModel):
+    norad_id: str
+    timestamp: str
+    frequency_hz: float
+    transmitted_frequency_hz: Optional[float] = 437.5e6
+    station_id: str
+    station_lat: float
+    station_lng: float
+    station_alt_m: Optional[float] = 100.0
+    observation_id: Optional[str] = None
+
+@app.post("/ingest-observation")
+def ingest_observation(obs: IngestObservationInput):
+    try:
+        obs_dict = {
+            "timestamp": obs.timestamp,
+            "frequency_hz": obs.frequency_hz,
+            "transmitted_frequency_hz": obs.transmitted_frequency_hz,
+            "station_id": obs.station_id,
+            "station_lat": obs.station_lat,
+            "station_lng": obs.station_lng,
+            "station_alt_m": obs.station_alt_m,
+            "observation_id": obs.observation_id
+        }
+        res = process_observation_and_correct_tle(obs.norad_id, obs_dict, active_ukf_filters)
+        
+        # Broadcast updated covariance state to frontend
+        if loop and manager.active_connections:
+            sat_id = obs.norad_id
+            if sat_id in active_ukf_filters:
+                P_updated = active_ukf_filters[sat_id]["covariance"]
+                std_r = float(np.sqrt(max(1.0, P_updated[0, 0])))
+                std_t = float(np.sqrt(max(1.0, P_updated[1, 1])))
+                std_n = float(np.sqrt(max(1.0, P_updated[2, 2])))
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast({
+                        "type": "covariance_update",
+                        "satellite_id": sat_id,
+                        "std_r": round(std_r, 1),
+                        "std_t": round(std_t, 1),
+                        "std_n": round(std_n, 1),
+                        "message": f"[{datetime.now().strftime('%H:%M:%S')}] Ingested Doppler observation. UKF updated. Positional error contracted (Radial: {std_r:.1f}m, Transverse: {std_t:.1f}m, Normal: {std_n:.1f}m)."
+                    }),
+                    loop
+                )
+        return res
+    except Exception as e:
+        logger.error(f"Failed to ingest observation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/observation-history/{norad_id}")
+def get_observation_history(norad_id: str):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, norad_id, observation_id, station_id, timestamp, frequency_hz, doppler_shift_hz, range_rate, residual
+            FROM ground_observations
+            WHERE norad_id = ?
+            ORDER BY id DESC
+            LIMIT 100
+        """, (norad_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        history = []
+        for r in rows:
+            history.append({
+                "id": r[0],
+                "norad_id": r[1],
+                "observation_id": r[2],
+                "station_id": r[3],
+                "timestamp": r[4],
+                "frequency_hz": r[5],
+                "doppler_shift_hz": r[6],
+                "range_rate": r[7],
+                "residual": r[8]
+            })
+        return history
+    except Exception as e:
+        logger.error(f"Failed to fetch observation history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+ground_telemetry_manager = ConnectionManager()
+
+@app.websocket("/ws/ground-telemetry")
+async def ground_telemetry_websocket(websocket: WebSocket):
+    await ground_telemetry_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ground_telemetry_manager.disconnect(websocket)
+
+async def live_ground_telemetry_feed():
+    from doppler_engine import get_station_eci, calculate_doppler_shift
+    from satnogs_client import SatNOGSClient
+    from sgp4.api import Satrec, jday
+    
+    satnogs = SatNOGSClient()
+    stations = satnogs.get_ground_stations()
+    
+    while True:
+        await asyncio.sleep(4.0) # Update every 4 seconds
+        if ground_telemetry_manager.active_connections:
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("SELECT norad_id, name, tle1, tle2 FROM fleet_satellites")
+                rows = cursor.fetchall()
+                conn.close()
+                
+                now = datetime.now(timezone.utc)
+                jd, fr = jday(now.year, now.month, now.day, now.hour, now.minute, now.second)
+                
+                updates = []
+                for norad_id, name, tle1, tle2 in rows:
+                    satrec = Satrec.twoline2rv(tle1, tle2)
+                    e, r, v = satrec.sgp4(jd, fr)
+                    if e != 0:
+                        continue
+                    r_sat = np.array(r) * 1000.0  # m
+                    v_sat = np.array(v) * 1000.0  # m/s
+                    
+                    for gs in stations[:5]: # Limit to first 5
+                        r_station, v_station = get_station_eci(gs["lat"], gs["lng"], gs["alt_m"], now)
+                        r_rel = r_sat - r_station
+                        r_rel_norm = np.linalg.norm(r_rel)
+                        r_station_norm = np.linalg.norm(r_station)
+                        
+                        sin_el = np.dot(r_rel, r_station) / (r_rel_norm * r_station_norm)
+                        sin_el = max(-1.0, min(1.0, sin_el))
+                        el_deg = np.degrees(np.arcsin(sin_el))
+                        
+                        f_trans = 437.5e6
+                        doppler = calculate_doppler_shift(f_trans, r_sat, v_sat, r_station, v_station)
+                        
+                        updates.append({
+                            "norad_id": norad_id,
+                            "name": name,
+                            "station_id": gs["station_id"],
+                            "station_name": gs["name"],
+                            "elevation_deg": round(el_deg, 2),
+                            "doppler_shift_hz": round(doppler, 2),
+                            "visible": bool(el_deg >= 10.0),
+                            "range_km": round(r_rel_norm / 1000.0, 2)
+                        })
+                        
+                if updates:
+                    await ground_telemetry_manager.broadcast({
+                        "type": "ground_telemetry",
+                        "timestamp": now.isoformat(),
+                        "updates": updates
+                    })
+            except Exception as e:
+                logger.error(f"Error in ground telemetry feed: {e}")
 
 @app.get("/dashboard")
 def dashboard():
