@@ -9,3 +9,12 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: DISCOS_API_TOKEN
+        sync: false
+      - key: SPACETRACK_IDENTITY
+        sync: false
+      - key: SPACETRACK_PASSWORD
+        sync: false
+      - key: SATNOGS_API_TOKEN
+        sync: false
+

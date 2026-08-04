@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+conjunction_history.db
+live_conjunctions.json
+tle_cache.json
+*.zip

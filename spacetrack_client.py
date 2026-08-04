@@ -4,6 +4,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_logged_spacetrack_info = False
+
 class SpaceTrackClient:
     """
     Authenticated client to query the official JSpOC Space-Track.org catalog.
@@ -16,8 +18,11 @@ class SpaceTrackClient:
         self.authenticated = False
         
     def authenticate(self) -> bool:
+        global _logged_spacetrack_info
         if not self.identity or not self.password:
-            logger.warning("[Space-Track API] Credentials not configured. Using CelesTrak fallback.")
+            if not _logged_spacetrack_info:
+                logger.info("[Space-Track API] SpaceTrack credentials not configured. Using CelesTrak GP fallback.")
+                _logged_spacetrack_info = True
             return False
             
         try:

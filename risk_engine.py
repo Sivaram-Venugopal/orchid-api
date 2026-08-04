@@ -7,6 +7,9 @@ def get_tle_fields(obj):
     """Safely extracts norad_id, tle1, and tle2 from various object types."""
     if isinstance(obj, dict):
         return obj.get("norad_id", ""), obj.get("tle1", ""), obj.get("tle2", "")
+    elif hasattr(obj, "model_dump"):
+        d = obj.model_dump()
+        return d.get("norad_id", ""), d.get("tle1", ""), d.get("tle2", "")
     elif hasattr(obj, "dict"):
         d = obj.dict()
         return d.get("norad_id", ""), d.get("tle1", ""), d.get("tle2", "")
